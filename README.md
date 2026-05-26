@@ -38,6 +38,26 @@ classification.
 - Evaluate raw candidate calls against GNN-filtered calls.
 - Merge multiple graph datasets for larger training runs.
 
+## Benchmark Results
+
+ReadGraphSV evaluates two stages:
+
+- **Raw CIGAR candidates**: all clustered candidates are treated as positive
+  calls.
+- **ReadGraphSV GNN-filtered calls**: candidates are retained only when their
+  GNN probability is above the selected threshold.
+
+Example held-out chr21 evaluation:
+
+| Method | Precision | Recall | F1 | AUC |
+|---|---:|---:|---:|---:|
+| Raw CIGAR candidates | 0.3589 | 1.0000 | 0.5282 | N/A |
+| ReadGraphSV GNN-filtered | 0.7628 | 0.9369 | 0.8410 | N/A |
+
+In this run, GNN filtering reduced false positives from 368 to 60 while
+retaining 193 of 206 true positives. A reusable reporting template is available
+at `results/benchmark_template.md`.
+
 ## Coordinate Convention
 
 ReadGraphSV uses 0-based BAM-style coordinates internally. Deletions are
@@ -55,9 +75,41 @@ Create a Python environment and install dependencies:
 pip install -r requirements.txt
 ```
 
+Alternatively, create a conda environment:
+
+```bash
+conda env create -f environment.yml
+conda activate readgraphsv
+```
+
 PyTorch Geometric installation can depend on your CUDA/PyTorch version. If the
 plain install fails, follow the official PyG wheel instructions for your
 machine.
+
+For development and tests:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q
+python -m ruff check .
+```
+
+## Reproducibility
+
+ReadGraphSV is designed as a reproducible method prototype. Recommended
+practice:
+
+- Use `environment.yml` or pinned `requirements.txt` versions to create the
+  software environment.
+- Keep raw BAM files, truth VCFs, graph datasets, model checkpoints, and
+  prediction outputs outside version control.
+- Record candidate extraction parameters: `--min_size`, `--window`, and
+  `--min_support`.
+- For supervised experiments, split data into train, validation, and test sets.
+- Use validation data for model selection and threshold selection; reserve the
+  test set for final reporting.
+- Save `results/train_metrics.csv`, `results/test_metrics.txt`, and
+  `results/evaluation.txt` for each experiment.
 
 ## One-Command Inference
 
@@ -155,7 +207,10 @@ Train the GNN:
 python train_gnn.py \
   --dataset graphs/dataset.pt \
   --model_out models/readgraph_gnn.pt \
-  --epochs 100
+  --epochs 100 \
+  --val_ratio 0.1 \
+  --test_ratio 0.2 \
+  --auto_threshold
 ```
 
 Predict candidate probabilities:
@@ -218,5 +273,16 @@ The first version is intentionally narrow:
 - Candidate node plus read evidence nodes.
 - Graph-level binary classification.
 
-Natural next steps are adding SA-tag/split-read evidence, soft-clip rescue,
-edge features, multi-task SV type prediction, and breakpoint refinement.
+## Development Roadmap
+
+Planned development path:
+
+- **v0.2**: add SA tag parsing, soft-clip features, split-read features,
+  supplementary-alignment counts, and strand-switch features.
+- **v0.3**: add edge attributes such as position distance, SV length
+  similarity, same-read links, same-strand links, and orientation-change
+  indicators.
+- **v0.4**: extend from binary candidate filtering to multi-task learning:
+  true/false classification, SV type classification, and breakpoint refinement.
+- **v0.5**: expand beyond DEL/INS toward inversion, duplication,
+  translocation, and complex-SV graph representations.

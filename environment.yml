@@ -1,0 +1,15 @@
+name: readgraphsv
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pysam=0.23.3
+  - pandas=2.3.3
+  - numpy=2.2.6
+  - scikit-learn=1.7.2
+  - tqdm=4.67.3
+  - pytorch=2.5.1
+  - pip
+  - pip:
+      - torch-geometric==2.7.0

@@ -1,6 +1,5 @@
 """Shared pytest helpers for ReadGraphSV."""
 
-import os
 import subprocess
 import sys
 from pathlib import Path

@@ -11,6 +11,7 @@ output*/
 
 # Keep directory placeholders if they are added later.
 !.gitkeep
+!results/benchmark_template.md
 
 # Local notebooks and logs
 .ipynb_checkpoints/

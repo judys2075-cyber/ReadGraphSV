@@ -25,7 +25,10 @@ jobs:
           python -m pip install -r requirements-dev.txt
 
       - name: Compile Python files
-        run: python -m py_compile *.py
+        run: python -m compileall .
+
+      - name: Lint
+        run: python -m ruff check .
 
       - name: Run tests
         run: python -m pytest -q
