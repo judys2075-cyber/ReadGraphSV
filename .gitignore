@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+
+# Generated pipeline outputs
+data/*
+graphs/*
+models/*
+results/*
+runs/*
+output*/
+
+# Keep directory placeholders if they are added later.
+!.gitkeep
+
+# Local notebooks and logs
+.ipynb_checkpoints/
+*.log
+
+# Local experiment launchers with machine-specific paths
+run_test_*.sh
+run_external_*.sh
