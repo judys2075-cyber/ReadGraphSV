@@ -1,12 +1,42 @@
 # ReadGraphSV v0.1
 
-ReadGraphSV is a prototype deep learning project for long-read structural
-variant discovery. It extracts DEL and INS evidence directly from BAM CIGAR
-strings, clusters read-level signals into candidate regions, builds
-region-level evidence graphs, and trains a GNN to filter true candidate SVs.
+ReadGraphSV is a prototype graph neural network framework for structural
+variant discovery from long-read alignments. The project focuses on turning
+alignment evidence from BAM files into explicit region-level graphs, so that a
+GNN can learn whether a candidate event is likely to represent a real
+structural variant.
 
-This project does not depend on SVision. It does not read SVision segment
-files, CNN images, GFA files, or softmax features.
+The first release, ReadGraphSV v0.1, targets deletion (DEL) and insertion (INS)
+candidate scoring. It scans primary and supplementary long-read alignments,
+extracts large CIGAR `D` and `I` operations, clusters nearby read-level signals
+into candidate SV regions, converts each candidate into a graph of read
+evidence, and applies a GraphSAGE model for graph-level binary classification.
+
+The central idea is simple: structural variants are not just isolated positions,
+but patterns of agreement among multiple read alignments. ReadGraphSV therefore
+represents each candidate as a small evidence graph:
+
+- one candidate node summarizes the putative SV region;
+- read evidence nodes represent supporting CIGAR-derived events;
+- graph edges connect reads to the candidate and connect similar read evidence
+  events to each other.
+
+This design keeps the evidence interpretable and modular. The current
+implementation is intentionally compact, making it suitable for method
+development, benchmarking, and rapid experimentation with graph-based SV
+classification.
+
+## Current Capabilities
+
+- Extract CIGAR-derived DEL and INS signals directly from long-read BAM files.
+- Cluster read-level signals into candidate SV regions.
+- Optionally label candidates against a truth VCF for supervised training and
+  evaluation.
+- Build PyTorch Geometric graph datasets from candidate regions.
+- Train a GraphSAGE model for true/false candidate classification.
+- Run one-command inference from BAM to filtered TSV and VCF output.
+- Evaluate raw candidate calls against GNN-filtered calls.
+- Merge multiple graph datasets for larger training runs.
 
 ## Coordinate Convention
 
@@ -69,8 +99,8 @@ Evaluation mode additionally writes:
 - `output/evaluation.txt`
 
 ReadGraphSV v0.1 currently supports CIGAR-derived DEL/INS candidate scoring.
-It does not rely on SVision GFA files, CNN images, segments, or softmax
-features.
+Future versions are planned to add split-read signals, soft-clip rescue,
+edge-level prediction, and richer complex-SV graph representations.
 
 ## Step-By-Step Pipeline
 
