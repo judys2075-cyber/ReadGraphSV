@@ -154,6 +154,39 @@ Evaluation mode additionally writes:
 - `output/candidates_labeled.tsv`
 - `output/evaluation.txt`
 
+### ReadGraphSV v0.2 One-Click Usage
+
+The v0.2 wrapper runs CIGAR signal extraction, candidate clustering, extra
+evidence extraction, v0.2 graph construction, GNN prediction, filtering, and
+VCF export:
+
+```bash
+python run_readgraphsv_v2.py \
+  --bam real_data/HG002_chr21/bam/HG002_chr21.bam \
+  --model models/readgraph_gnn_v2_combined_001_002_003.pt \
+  --outdir runs/HG002_chr21_real \
+  --truth real_data/HG002_chr21/truth_chr21/HG002_chr21_DELINS_50.vcf.gz \
+  --threshold 0.5
+```
+
+Without `--truth`, v0.2 still runs in inference mode and writes
+`data/candidates_for_graph.tsv` with a placeholder `label` column.
+
+The v0.2 wrapper writes:
+
+- `outdir/data/signals.tsv`
+- `outdir/data/candidates.tsv`
+- `outdir/data/extra_signals.tsv`
+- `outdir/data/candidates_for_graph.tsv`
+- `outdir/graphs/dataset_v2.pt`
+- `outdir/results/predictions_v2.tsv`
+- `outdir/results/filtered_candidates.tsv`
+- `outdir/vcf/filtered.vcf`
+
+If `--truth` is provided, it also writes
+`outdir/data/candidates_labeled.tsv` and
+`outdir/results/evaluation_v2.txt`.
+
 ReadGraphSV v0.1 currently supports CIGAR-derived DEL/INS candidate scoring.
 Future versions are planned to add split-read signals, soft-clip rescue,
 edge-level prediction, and richer complex-SV graph representations.
@@ -294,6 +327,8 @@ python export_vcf.py \
   candidates.
 - `merge_datasets.py`: merges multiple PyG `dataset.pt` files.
 - `run_readgraphsv.py`: runs the v0.1 inference pipeline end to end.
+- `run_readgraphsv_v2.py`: runs the v0.2 CIGAR plus extra-evidence inference
+  pipeline end to end.
 - `export_vcf.py`: exports filtered DEL/INS predictions as a simple VCF.
 
 ## v0.1 Scope
