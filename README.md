@@ -1,4 +1,4 @@
-# ReadGraphSV v0.1
+# ReadGraphSV
 
 ReadGraphSV is a prototype graph neural network framework for structural
 variant discovery from long-read alignments. The project focuses on turning
@@ -29,6 +29,8 @@ classification.
 ## Current Capabilities
 
 - Extract CIGAR-derived DEL and INS signals directly from long-read BAM files.
+- Extract v0.2 extra evidence from soft clips, SA tags, and supplementary
+  alignment records.
 - Cluster read-level signals into candidate SV regions.
 - Optionally label candidates against a truth VCF for supervised training and
   evaluation.
@@ -171,6 +173,15 @@ python extract_cigar_events.py \
   --out data/signals.tsv
 ```
 
+Extract v0.2 soft-clip, SA-tag, and supplementary-alignment evidence:
+
+```bash
+python extract_extra_events.py \
+  --bam aligned_chr21_10x_with_rg.bam \
+  --min_clip 50 \
+  --out data/extra_signals.tsv
+```
+
 Cluster signals into candidate SVs:
 
 ```bash
@@ -252,6 +263,8 @@ python export_vcf.py \
 
 - `extract_cigar_events.py`: scans primary and supplementary alignments and
   emits large CIGAR DEL/INS events.
+- `extract_extra_events.py`: extracts v0.2 soft-clip, SA-tag connection, and
+  supplementary-alignment evidence from BAM/SAM records.
 - `cluster_events.py`: groups nearby same-type signals into candidate SVs.
 - `label_candidates.py`: labels candidates by matching DEL/INS truth VCF
   records.
@@ -273,12 +286,33 @@ The first version is intentionally narrow:
 - Candidate node plus read evidence nodes.
 - Graph-level binary classification.
 
+## v0.2 Extra Evidence
+
+ReadGraphSV v0.2 adds a standalone extra evidence extractor for signals that
+are useful for split-read and complex-SV modeling:
+
+- `SOFTCLIP_LEFT` and `SOFTCLIP_RIGHT` evidence from large terminal soft clips.
+- `SA_CONNECTION` evidence from primary-alignment `SA:Z` tags, with destination
+  segment coordinates, orientation changes, chromosome changes, destination
+  MAPQ, SA CIGAR, and NM values.
+- `SUPPLEMENTARY` evidence from records carrying the supplementary alignment
+  flag.
+
+All extra evidence coordinates are 0-based. The extractor scans BAM/SAM records
+in file order and does not require an index. If a BAM contains no qualifying
+soft clips, SA tags, or supplementary records, it still writes a valid TSV with
+only the header.
+
+The v0.2 extra evidence file is currently independent from the v0.1 graph
+builder. The next integration step is to turn these signals into additional
+read-node features and edge attributes for richer evidence graphs.
+
 ## Development Roadmap
 
 Planned development path:
 
-- **v0.2**: add SA tag parsing, soft-clip features, split-read features,
-  supplementary-alignment counts, and strand-switch features.
+- **v0.2**: extract SA tag, soft-clip, and supplementary-alignment evidence,
+  then integrate these signals into graph features.
 - **v0.3**: add edge attributes such as position distance, SV length
   similarity, same-read links, same-strand links, and orientation-change
   indicators.
