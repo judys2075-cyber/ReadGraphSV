@@ -31,6 +31,8 @@ classification.
 - Extract CIGAR-derived DEL and INS signals directly from long-read BAM files.
 - Extract v0.2 extra evidence from soft clips, SA tags, and supplementary
   alignment records.
+- Build v0.2 evidence graphs that combine CIGAR DEL/INS nodes with soft-clip,
+  SA-connection, and supplementary-alignment nodes.
 - Cluster read-level signals into candidate SV regions.
 - Optionally label candidates against a truth VCF for supervised training and
   evaluation.
@@ -212,6 +214,21 @@ python build_graph_dataset.py \
   --out graphs/dataset.pt
 ```
 
+Build a v0.2 enhanced graph dataset with extra evidence nodes:
+
+```bash
+python build_graph_dataset_v2.py \
+  --signals data/signals.tsv \
+  --extra data/extra_signals.tsv \
+  --candidates data/candidates_labeled.tsv \
+  --extra_window 1000 \
+  --read_edge_window 100 \
+  --out graphs/dataset_v2.pt
+```
+
+To train with v0.2 features, pass `--dataset graphs/dataset_v2.pt` to
+`train_gnn.py`.
+
 Train the GNN:
 
 ```bash
@@ -269,6 +286,8 @@ python export_vcf.py \
 - `label_candidates.py`: labels candidates by matching DEL/INS truth VCF
   records.
 - `build_graph_dataset.py`: builds one region-level PyG graph per candidate.
+- `build_graph_dataset_v2.py`: builds enhanced v0.2 PyG graphs with candidate,
+  CIGAR evidence, and extra evidence nodes.
 - `train_gnn.py`: trains a GraphSAGE binary graph classifier.
 - `predict_gnn.py`: runs a trained model on candidate graphs.
 - `evaluate_predictions.py`: compares raw candidates with GNN-filtered
@@ -303,9 +322,11 @@ in file order and does not require an index. If a BAM contains no qualifying
 soft clips, SA tags, or supplementary records, it still writes a valid TSV with
 only the header.
 
-The v0.2 extra evidence file is currently independent from the v0.1 graph
-builder. The next integration step is to turn these signals into additional
-read-node features and edge attributes for richer evidence graphs.
+The v0.2 graph builder consumes both `signals.tsv` and `extra_signals.tsv`.
+Each graph keeps the v0.1 candidate and CIGAR evidence nodes, then adds nearby
+soft-clip, SA-connection, and supplementary-alignment nodes. Candidate-to-
+evidence edges are always bidirectional, and nearby evidence nodes are connected
+when their graph positions fall within `--read_edge_window`.
 
 ## Development Roadmap
 
