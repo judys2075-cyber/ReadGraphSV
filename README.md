@@ -274,6 +274,22 @@ python train_gnn.py \
   --auto_threshold
 ```
 
+Fine-tune a v0.2 model on real data with an independent validation dataset:
+
+```bash
+python train_gnn.py \
+  --dataset graphs/HG002_real_train_chr20_chr22.pt \
+  --val_dataset runs/HG002_chr19_real/graphs/dataset_v2.pt \
+  --init_model models/readgraph_gnn_v2_combined_001_002_003.pt \
+  --model_out models/readgraph_gnn_v2_real_finetuned_chr20_chr22.pt \
+  --epochs 80 \
+  --lr 0.0001 \
+  --hidden 64 \
+  --class_weight auto \
+  --patience 15 \
+  --seed 42
+```
+
 Predict candidate probabilities:
 
 ```bash

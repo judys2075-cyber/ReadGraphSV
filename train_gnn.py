@@ -31,7 +31,7 @@ METRIC_FIELDS = [
 ]
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", required=True, help="Input graphs/dataset.pt")
     parser.add_argument("--model_out", required=True, help="Output model checkpoint")
@@ -46,8 +46,19 @@ def parse_args():
         action="store_true",
         help="Search the best validation-set threshold for F1 at each epoch",
     )
+    parser.add_argument("--init_model", default=None, help="Optional checkpoint used to initialize fine-tuning")
+    parser.add_argument("--val_dataset", default=None, help="Optional independent validation graph dataset")
+    parser.add_argument("--test_dataset", default=None, help="Optional independent test graph dataset")
+    parser.add_argument("--patience", type=int, default=15, help="Early stopping patience measured in epochs")
+    parser.add_argument(
+        "--class_weight",
+        choices=["auto", "none"],
+        default="auto",
+        help="Class weighting mode for BCEWithLogitsLoss",
+    )
+    parser.add_argument("--freeze_encoder", action="store_true", help="Only train the final classifier layers")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def ensure_parent_dir(path):
@@ -67,6 +78,90 @@ def sanitize_graph(graph):
     """Drop metadata before batching so PyG only collates tensor fields."""
     y = graph.y.view(-1).float() if hasattr(graph, "y") else torch.tensor([0.0])
     return Data(x=graph.x.float(), edge_index=graph.edge_index.long(), y=y)
+
+
+def infer_feature_names(raw_graphs, in_channels):
+    for graph in raw_graphs:
+        feature_names = getattr(graph, "feature_names", None)
+        if feature_names and len(feature_names) == in_channels:
+            return list(feature_names)
+    if len(FEATURE_NAMES) == in_channels:
+        return FEATURE_NAMES
+    return [f"feature_{idx}" for idx in range(in_channels)]
+
+
+def load_graph_dataset(path, required=False):
+    if not os.path.exists(path):
+        if required:
+            raise FileNotFoundError(f"Dataset not found: {path}")
+        logging.warning("Dataset not found: %s", path)
+        return [], []
+
+    raw_graphs = safe_torch_load(path)
+    graphs = [sanitize_graph(graph) for graph in raw_graphs if hasattr(graph, "x") and graph.x.numel() > 0]
+    if not graphs:
+        message = f"Dataset has no usable graphs: {path}"
+        if required:
+            raise ValueError(message)
+        logging.warning(message)
+    return raw_graphs, graphs
+
+
+def validate_feature_dimensions(name, graphs, expected):
+    for idx, graph in enumerate(graphs):
+        observed = int(graph.x.size(1))
+        if observed != expected:
+            raise ValueError(
+                f"{name} graph {idx} has {observed} features, expected {expected}; "
+                "all train/validation/test datasets must use the same graph feature schema"
+            )
+
+
+def clone_state_dict(model):
+    return {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
+
+
+def load_initial_model(model, init_model, expected_in_channels, expected_hidden):
+    checkpoint = safe_torch_load(init_model, map_location="cpu")
+    if "model_state" not in checkpoint:
+        raise ValueError(f"Initial checkpoint has no model_state: {init_model}")
+
+    init_in_channels = int(checkpoint.get("in_channels", expected_in_channels))
+    init_hidden = int(checkpoint.get("hidden_channels", expected_hidden))
+    if init_in_channels != expected_in_channels:
+        raise ValueError(
+            f"Initial model expects {init_in_channels} input features, "
+            f"but training dataset has {expected_in_channels}"
+        )
+    if init_hidden != expected_hidden:
+        raise ValueError(
+            f"Initial model hidden size is {init_hidden}, but --hidden is {expected_hidden}; "
+            "use the same hidden size as the checkpoint"
+        )
+
+    model.load_state_dict(checkpoint["model_state"], strict=True)
+    logging.info("Loaded initial model weights from %s", init_model)
+    return checkpoint
+
+
+def freeze_encoder_parameters(model):
+    frozen = 0
+    trainable = 0
+    for name, param in model.named_parameters():
+        if name.startswith("classifier."):
+            param.requires_grad = True
+            trainable += param.numel()
+        else:
+            param.requires_grad = False
+            frozen += param.numel()
+    logging.info("Freeze encoder enabled: frozen=%d trainable=%d parameters", frozen, trainable)
+
+
+def trainable_parameters(model):
+    params = [param for param in model.parameters() if param.requires_grad]
+    if not params:
+        raise ValueError("No trainable parameters remain; check --freeze_encoder and model architecture")
+    return params
 
 
 def split_dataset(graphs, val_ratio, test_ratio, seed):
@@ -98,6 +193,56 @@ def split_dataset(graphs, val_ratio, test_ratio, seed):
     val = [graphs[i] for i in val_indices] or train
     test = [graphs[i] for i in test_indices] or val
     return train, val, test
+
+
+def split_train_val(graphs, val_ratio, seed):
+    """Split graphs into train/validation sets when an external test set is used."""
+    train, val, _test = split_dataset(graphs, val_ratio=val_ratio, test_ratio=0.0, seed=seed)
+    return train, val
+
+
+def resolve_datasets(args, graphs):
+    """Resolve train/validation/test graphs while preserving legacy random splitting."""
+    if args.val_dataset:
+        _raw_val, val_graphs = load_graph_dataset(args.val_dataset, required=True)
+        train_graphs = graphs
+        if args.test_dataset:
+            _raw_test, test_graphs = load_graph_dataset(args.test_dataset, required=True)
+        else:
+            test_graphs = []
+        split_mode = "external_validation"
+    elif args.test_dataset:
+        train_graphs, val_graphs = split_train_val(graphs, args.val_ratio, args.seed)
+        _raw_test, test_graphs = load_graph_dataset(args.test_dataset, required=True)
+        split_mode = "random_train_val_external_test"
+    else:
+        train_graphs, val_graphs, test_graphs = split_dataset(graphs, args.val_ratio, args.test_ratio, args.seed)
+        split_mode = "random_train_val_test"
+
+    return train_graphs, val_graphs, test_graphs, split_mode
+
+
+def build_loader(graphs, batch_size, shuffle=False):
+    if not graphs:
+        return None
+    return DataLoader(graphs, batch_size=min(batch_size, len(graphs)), shuffle=shuffle)
+
+
+def resolve_pos_weight(train_graphs, mode, device):
+    if mode == "none":
+        logging.info("Class weighting disabled")
+        return None
+
+    train_labels = np.array([int(graph.y.item()) for graph in train_graphs], dtype=int)
+    positives = int(train_labels.sum())
+    negatives = int(len(train_labels) - positives)
+    if positives > 0 and negatives > 0:
+        value = negatives / positives
+        logging.info("Class weighting auto: positives=%d negatives=%d pos_weight=%.4f", positives, negatives, value)
+        return torch.tensor([value], dtype=torch.float32, device=device)
+
+    logging.warning("Training split has only one class; using pos_weight=1.0")
+    return torch.tensor([1.0], dtype=torch.float32, device=device)
 
 
 def compute_metrics(labels, probs, threshold=0.5):
@@ -133,6 +278,8 @@ def select_best_threshold(labels, probs, default_threshold=0.5):
 
 @torch.no_grad()
 def predict_loader(model, loader, device):
+    if loader is None:
+        return [], []
     model.eval()
     labels = []
     probs = []
@@ -169,12 +316,22 @@ def write_test_summary(path, metrics, threshold, epoch):
         print("Test AUC: NA" if np.isnan(auc) else f"Test AUC: {auc:.6f}", file=handle)
 
 
+def write_no_test_summary(path, threshold, epoch):
+    with open(path, "w") as handle:
+        print(f"Best epoch: {epoch}", file=handle)
+        print(f"Selected threshold: {threshold:.6f}", file=handle)
+        print("No independent test dataset was evaluated.", file=handle)
+
+
 def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+
+    if args.init_model and os.path.abspath(args.init_model) == os.path.abspath(args.model_out):
+        raise ValueError("--model_out must be different from --init_model when fine-tuning")
 
     ensure_parent_dir(args.model_out)
     project_root = os.path.dirname(os.path.abspath(__file__))
@@ -183,50 +340,58 @@ def main():
     metrics_path = os.path.join(results_dir, "train_metrics.csv")
     test_summary_path = os.path.join(results_dir, "test_metrics.txt")
 
-    if not os.path.exists(args.dataset):
-        logging.warning("Dataset not found: %s", args.dataset)
-        write_empty_metrics(metrics_path)
-        return
-
-    raw_graphs = safe_torch_load(args.dataset)
-    graphs = [sanitize_graph(graph) for graph in raw_graphs if hasattr(graph, "x") and graph.x.numel() > 0]
+    raw_graphs, graphs = load_graph_dataset(args.dataset)
     if not graphs:
         logging.warning("Dataset has no usable graphs: %s", args.dataset)
         write_empty_metrics(metrics_path)
         return
 
-    train_graphs, val_graphs, test_graphs = split_dataset(graphs, args.val_ratio, args.test_ratio, args.seed)
+    train_graphs, val_graphs, test_graphs, split_mode = resolve_datasets(args, graphs)
     in_channels = int(train_graphs[0].x.size(1))
-    train_loader = DataLoader(train_graphs, batch_size=min(32, len(train_graphs)), shuffle=True)
-    val_loader = DataLoader(val_graphs, batch_size=min(64, len(val_graphs)), shuffle=False)
-    test_loader = DataLoader(test_graphs, batch_size=min(64, len(test_graphs)), shuffle=False)
+    feature_names = infer_feature_names(raw_graphs, in_channels)
+    validate_feature_dimensions("train", train_graphs, in_channels)
+    validate_feature_dimensions("validation", val_graphs, in_channels)
+    validate_feature_dimensions("test", test_graphs, in_channels)
+
+    train_loader = build_loader(train_graphs, batch_size=32, shuffle=True)
+    val_loader = build_loader(val_graphs, batch_size=64, shuffle=False)
+    test_loader = build_loader(test_graphs, batch_size=64, shuffle=False)
 
     logging.info(
-        "Dataset split: train=%d val=%d test=%d",
+        "Dataset split mode=%s: train=%d val=%d test=%d",
+        split_mode,
         len(train_graphs),
         len(val_graphs),
         len(test_graphs),
     )
+    if args.val_dataset:
+        logging.info("Using independent validation dataset: %s", args.val_dataset)
+    if args.test_dataset:
+        logging.info("Using independent test dataset: %s", args.test_dataset)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = ReadGraphSAGE(in_channels=in_channels, hidden_channels=args.hidden).to(device)
 
-    train_labels = np.array([int(graph.y.item()) for graph in train_graphs], dtype=int)
-    positives = int(train_labels.sum())
-    negatives = int(len(train_labels) - positives)
-    if positives > 0 and negatives > 0:
-        pos_weight = torch.tensor([negatives / positives], dtype=torch.float32, device=device)
-    else:
-        pos_weight = torch.tensor([1.0], dtype=torch.float32, device=device)
-        logging.warning("Training split has only one class; using pos_weight=1.0")
+    init_checkpoint = None
+    if args.init_model:
+        init_checkpoint = load_initial_model(model, args.init_model, in_channels, args.hidden)
+        init_feature_names = init_checkpoint.get("feature_names")
+        if init_feature_names and list(init_feature_names) != list(feature_names):
+            logging.warning("Initial model feature names differ from the training dataset feature names")
 
+    if args.freeze_encoder:
+        freeze_encoder_parameters(model)
+
+    pos_weight = resolve_pos_weight(train_graphs, args.class_weight, device)
     criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.Adam(trainable_parameters(model), lr=args.lr)
 
     best_val_f1 = -1.0
     best_epoch = 0
     best_threshold = float(args.threshold)
     best_checkpoint = None
+    epochs_without_improvement = 0
+    early_stop_enabled = args.patience is not None and args.patience > 0
 
     with open(metrics_path, "w", newline="") as metrics_handle:
         writer = csv.DictWriter(metrics_handle, fieldnames=METRIC_FIELDS)
@@ -258,7 +423,10 @@ def main():
             val_precision, val_recall, val_f1, val_auc = compute_metrics(val_labels, val_probs, threshold)
 
             test_labels, test_probs = predict_loader(model, test_loader, device)
-            test_precision, test_recall, test_f1, test_auc = compute_metrics(test_labels, test_probs, threshold)
+            if test_loader is None:
+                test_precision = test_recall = test_f1 = test_auc = float("nan")
+            else:
+                test_precision, test_recall, test_f1, test_auc = compute_metrics(test_labels, test_probs, threshold)
 
             writer.writerow(
                 {
@@ -278,13 +446,14 @@ def main():
             metrics_handle.flush()
 
             logging.info(
-                "epoch=%d loss=%.4f threshold=%.2f val_f1=%.3f test_f1=%.3f test_auc=%s",
+                "epoch=%d loss=%.4f threshold=%.2f val_precision=%.3f val_recall=%.3f val_f1=%.3f val_auc=%s",
                 epoch,
                 train_loss,
                 threshold,
+                val_precision,
+                val_recall,
                 val_f1,
-                test_f1,
-                "NA" if np.isnan(test_auc) else f"{test_auc:.3f}",
+                "NA" if np.isnan(val_auc) else f"{val_auc:.3f}",
             )
 
             if val_f1 > best_val_f1:
@@ -292,33 +461,52 @@ def main():
                 best_epoch = epoch
                 best_threshold = threshold
                 best_checkpoint = {
-                    "model_state": {
-                        key: value.detach().cpu().clone() for key, value in model.state_dict().items()
-                    },
+                    "model_state": clone_state_dict(model),
                     "in_channels": in_channels,
                     "hidden_channels": args.hidden,
-                    "feature_names": FEATURE_NAMES,
+                    "feature_names": feature_names,
                     "best_val_f1": best_val_f1,
                     "best_threshold": best_threshold,
                     "epoch": best_epoch,
                     "auto_threshold": bool(args.auto_threshold),
+                    "init_model": args.init_model or "",
+                    "val_dataset": args.val_dataset or "",
+                    "test_dataset": args.test_dataset or "",
+                    "split_mode": split_mode,
+                    "class_weight": args.class_weight,
+                    "freeze_encoder": bool(args.freeze_encoder),
+                    "patience": int(args.patience),
                 }
                 torch.save(best_checkpoint, args.model_out)
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+                if early_stop_enabled and epochs_without_improvement >= args.patience:
+                    logging.info(
+                        "Early stopping at epoch %d after %d epochs without validation F1 improvement",
+                        epoch,
+                        epochs_without_improvement,
+                    )
+                    break
 
     if best_checkpoint is not None:
         model.load_state_dict(best_checkpoint["model_state"])
-        test_labels, test_probs = predict_loader(model, test_loader, device)
-        final_test_metrics = compute_metrics(test_labels, test_probs, best_threshold)
-        write_test_summary(test_summary_path, final_test_metrics, best_threshold, best_epoch)
-        precision, recall, f1, auc = final_test_metrics
-        logging.info(
-            "Final test metrics at threshold %.3f: precision=%.3f recall=%.3f f1=%.3f auc=%s",
-            best_threshold,
-            precision,
-            recall,
-            f1,
-            "NA" if np.isnan(auc) else f"{auc:.3f}",
-        )
+        if test_loader is not None:
+            test_labels, test_probs = predict_loader(model, test_loader, device)
+            final_test_metrics = compute_metrics(test_labels, test_probs, best_threshold)
+            write_test_summary(test_summary_path, final_test_metrics, best_threshold, best_epoch)
+            precision, recall, f1, auc = final_test_metrics
+            logging.info(
+                "Final test metrics at threshold %.3f: precision=%.3f recall=%.3f f1=%.3f auc=%s",
+                best_threshold,
+                precision,
+                recall,
+                f1,
+                "NA" if np.isnan(auc) else f"{auc:.3f}",
+            )
+        else:
+            write_no_test_summary(test_summary_path, best_threshold, best_epoch)
+            logging.info("No independent test dataset was evaluated")
 
     logging.info("Saved best validation-F1 model to %s", args.model_out)
     logging.info("Wrote training metrics to %s", metrics_path)
