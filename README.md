@@ -187,6 +187,9 @@ If `--truth` is provided, it also writes
 `outdir/data/candidates_labeled.tsv` and
 `outdir/results/evaluation_v2.txt`.
 
+ReadGraphSV v0.2 outputs symbolic DEL/INS VCF records with `FORMAT=GT` and
+genotype currently set to `./.`.
+
 ReadGraphSV v0.1 currently supports CIGAR-derived DEL/INS candidate scoring.
 Future versions are planned to add split-read signals, soft-clip rescue,
 edge-level prediction, and richer complex-SV graph representations.

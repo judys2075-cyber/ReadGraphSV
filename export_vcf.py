@@ -79,6 +79,7 @@ def write_header(handle, sample):
     print('##INFO=<ID=GNN_PROB,Number=1,Type=Float,Description="GNN confidence score">', file=handle)
     print('##ALT=<ID=DEL,Description="Deletion">', file=handle)
     print('##ALT=<ID=INS,Description="Insertion">', file=handle)
+    print('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">', file=handle)
     print(f"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t{sample}", file=handle)
 
 

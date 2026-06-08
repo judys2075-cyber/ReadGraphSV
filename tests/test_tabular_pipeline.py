@@ -73,6 +73,7 @@ def test_cluster_label_export_and_evaluate(tmp_path):
     run_cli("export_vcf.py", "--pred", pred, "--threshold", "0.5", "--out", vcf)
     vcf_text = vcf.read_text()
     assert "##source=ReadGraphSV_v0.1" in vcf_text
+    assert '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">' in vcf_text
     assert "chr1\t111\tReadGraphSV_1\tN\t<DEL>" in vcf_text
     assert "SVLEN=-61" in vcf_text
 

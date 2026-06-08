@@ -149,6 +149,7 @@ def write_vcf_header(handle):
     print('##INFO=<ID=GNN_PROB,Number=1,Type=Float,Description="GNN confidence score">', file=handle)
     print('##ALT=<ID=DEL,Description="Deletion">', file=handle)
     print('##ALT=<ID=INS,Description="Insertion">', file=handle)
+    print('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">', file=handle)
     print("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tReadGraphSV", file=handle)
 
 

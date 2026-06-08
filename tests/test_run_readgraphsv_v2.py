@@ -115,6 +115,7 @@ def test_run_readgraphsv_v2_without_truth_generates_candidates_for_graph(tmp_pat
     assert len(filtered) == 1
     vcf_text = (outdir / "vcf/filtered.vcf").read_text()
     assert "##source=ReadGraphSV_v0.2" in vcf_text
+    assert '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">' in vcf_text
     assert "SVTYPE=DEL" in vcf_text
     assert "\tGT\t./." in vcf_text
 
