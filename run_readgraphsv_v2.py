@@ -36,9 +36,54 @@ def parse_args(argv=None):
     parser.add_argument("--extra_window", type=int, default=1000, help="Window for assigning extra evidence")
     parser.add_argument("--read_edge_window", type=int, default=100, help="Window for evidence-evidence graph edges")
     parser.add_argument("--truth", default=None, help="Optional truth VCF for labeling and evaluation")
+    parser.add_argument(
+        "--contig-length",
+        type=int,
+        default=None,
+        help="Optional VCF contig length fallback when the BAM header cannot be read",
+    )
     parser.add_argument("--max_dist", type=int, default=500, help="Maximum truth matching breakpoint distance")
     parser.add_argument("--min_size_sim", type=float, default=0.5, help="Minimum truth matching size similarity")
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--use_extra_candidates",
+        action="store_true",
+        help="Enable v0.3 extra-evidence candidate proposal and CIGAR/extra candidate merging",
+    )
+    parser.add_argument("--extra_candidate_window", type=int, default=500, help="Window for v0.3 extra candidate clustering")
+    parser.add_argument(
+        "--min_softclip_support",
+        type=int,
+        default=10,
+        help="Minimum SOFTCLIP support for v0.3 extra candidate proposal",
+    )
+    parser.add_argument(
+        "--min_sa_support",
+        type=int,
+        default=2,
+        help="Minimum SA_CONNECTION support for v0.3 extra candidate proposal",
+    )
+    parser.add_argument(
+        "--min_supplementary_support",
+        type=int,
+        default=2,
+        help="Minimum SUPPLEMENTARY support for v0.3 extra candidate proposal",
+    )
+    parser.add_argument(
+        "--min_extra_only_support",
+        type=int,
+        default=30,
+        help="Minimum support for EXTRA_ONLY candidates after v0.3 merging",
+    )
+    parser.add_argument(
+        "--extra_candidate_min_size",
+        type=int,
+        default=None,
+        help="Minimum size for v0.3 extra candidate proposal; defaults to --min_size",
+    )
+    args = parser.parse_args(argv)
+    if args.extra_candidate_min_size is None:
+        args.extra_candidate_min_size = args.min_size
+    return args
 
 
 def script_path(name):
@@ -85,6 +130,10 @@ def write_unlabeled_candidates(candidates_path, out_path, label_value=0):
 
 def read_predictions(path):
     return read_tsv(path, columns=PREDICTION_FIELDS)
+
+
+def count_tsv_rows(path):
+    return len(read_tsv(path))
 
 
 def filter_predictions(predictions_path, out_path, threshold):
@@ -139,9 +188,52 @@ def estimate_svlen(row):
     return max(1, abs(end - start))
 
 
-def write_vcf_header(handle):
+def prediction_chroms(pred):
+    if pred.empty or "chrom" not in pred.columns:
+        return []
+    chroms = [str(chrom) for chrom in pred["chrom"].dropna().unique() if str(chrom)]
+    return sorted(chroms, key=chrom_sort_key)
+
+
+def read_bam_reference_lengths(bam_path):
+    try:
+        import pysam
+    except ImportError:
+        logging.warning("pysam is unavailable; VCF contig lengths will use fallback values")
+        return {}
+
+    try:
+        with pysam.AlignmentFile(bam_path) as handle:
+            return {str(name): int(length) for name, length in zip(handle.references, handle.lengths)}
+    except (OSError, ValueError) as exc:
+        logging.warning("Could not read BAM header from %s: %s", bam_path, exc)
+        return {}
+
+
+def lookup_contig_length(chrom, reference_lengths, fallback_length=None):
+    chrom = str(chrom)
+    for key in [chrom, chrom[3:] if chrom.lower().startswith("chr") else f"chr{chrom}"]:
+        if key in reference_lengths:
+            return int(reference_lengths[key])
+    if fallback_length is not None:
+        return int(fallback_length)
+    return None
+
+
+def write_contig_headers(handle, chroms, reference_lengths=None, fallback_length=None):
+    reference_lengths = reference_lengths or {}
+    for chrom in chroms:
+        length = lookup_contig_length(chrom, reference_lengths, fallback_length=fallback_length)
+        if length is None:
+            print(f"##contig=<ID={chrom}>", file=handle)
+        else:
+            print(f"##contig=<ID={chrom},length={length}>", file=handle)
+
+
+def write_vcf_header(handle, chroms=None, reference_lengths=None, fallback_contig_length=None):
     print("##fileformat=VCFv4.2", file=handle)
     print("##source=ReadGraphSV_v0.2", file=handle)
+    write_contig_headers(handle, chroms or [], reference_lengths, fallback_contig_length)
     print('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="SV type">', file=handle)
     print('##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant">', file=handle)
     print('##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="SV length">', file=handle)
@@ -153,12 +245,14 @@ def write_vcf_header(handle):
     print("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tReadGraphSV", file=handle)
 
 
-def write_filtered_vcf(predictions_path, out_path, threshold):
+def write_filtered_vcf(predictions_path, out_path, threshold, bam_path=None, contig_length=None):
     ensure_dir(os.path.dirname(os.path.abspath(out_path)))
     pred = read_predictions(predictions_path)
+    reference_lengths = read_bam_reference_lengths(bam_path) if bam_path else {}
+    chroms = prediction_chroms(pred)
     record_count = 0
     with open(out_path, "w") as handle:
-        write_vcf_header(handle)
+        write_vcf_header(handle, chroms=chroms, reference_lengths=reference_lengths, fallback_contig_length=contig_length)
         if pred.empty:
             logging.warning("Prediction file is empty; wrote VCF header only: %s", out_path)
             return 0
@@ -238,6 +332,8 @@ def main(argv=None):
     signals = os.path.join(data_dir, "signals.tsv")
     candidates = os.path.join(data_dir, "candidates.tsv")
     extra_signals = os.path.join(data_dir, "extra_signals.tsv")
+    extra_candidates = os.path.join(data_dir, "extra_candidates.tsv")
+    candidates_v3_merged = os.path.join(data_dir, "candidates_v3_merged.tsv")
     candidates_labeled = os.path.join(data_dir, "candidates_labeled.tsv")
     candidates_for_graph = os.path.join(data_dir, "candidates_for_graph.tsv")
     graph_dataset = os.path.join(graph_dir, "dataset_v2.pt")
@@ -248,6 +344,7 @@ def main(argv=None):
 
     logging.info("ReadGraphSV v0.2 inference pipeline")
     logging.info("Output directory: %s", outdir)
+    logging.info("v0.3 extra candidate proposal enabled: %s", bool(args.use_extra_candidates))
 
     run_step(
         "Extract CIGAR DEL/INS signals",
@@ -293,6 +390,59 @@ def main(argv=None):
         ],
     )
 
+    candidate_input = candidates
+    if args.use_extra_candidates:
+        logging.info("CIGAR candidates path: %s", candidates)
+        logging.info("Extra candidates path: %s", extra_candidates)
+        logging.info("Merged candidates path: %s", candidates_v3_merged)
+        run_step(
+            "Propose v0.3 extra-evidence candidates",
+            [
+                sys.executable,
+                script_path("extra_candidate_proposer.py"),
+                "--extra",
+                extra_signals,
+                "--out",
+                extra_candidates,
+                "--window",
+                str(args.extra_candidate_window),
+                "--min_size",
+                str(args.extra_candidate_min_size),
+                "--min_softclip_support",
+                str(args.min_softclip_support),
+                "--min_sa_support",
+                str(args.min_sa_support),
+                "--min_supplementary_support",
+                str(args.min_supplementary_support),
+            ],
+        )
+        run_step(
+            "Merge CIGAR and v0.3 extra-evidence candidates",
+            [
+                sys.executable,
+                script_path("merge_candidates_v3.py"),
+                "--cigar-candidates",
+                candidates,
+                "--extra-candidates",
+                extra_candidates,
+                "--out",
+                candidates_v3_merged,
+                "--window",
+                str(args.extra_candidate_window),
+                "--min-size-sim",
+                str(args.min_size_sim),
+                "--min-extra-only-support",
+                str(args.min_extra_only_support),
+            ],
+        )
+        candidate_input = candidates_v3_merged
+        logging.info(
+            "v0.3 candidate counts: CIGAR=%d, extra=%d, merged=%d",
+            count_tsv_rows(candidates),
+            count_tsv_rows(extra_candidates),
+            count_tsv_rows(candidates_v3_merged),
+        )
+
     if args.truth:
         run_step(
             "Label candidates with truth VCF",
@@ -300,7 +450,7 @@ def main(argv=None):
                 sys.executable,
                 script_path("label_candidates.py"),
                 "--candidates",
-                candidates,
+                candidate_input,
                 "--truth",
                 args.truth,
                 "--max_dist",
@@ -315,7 +465,7 @@ def main(argv=None):
         labeled.to_csv(candidates_for_graph, sep="\t", index=False)
         logging.info("Using labeled candidates for graph construction: %s", candidates_for_graph)
     else:
-        write_unlabeled_candidates(candidates, candidates_for_graph, label_value=0)
+        write_unlabeled_candidates(candidate_input, candidates_for_graph, label_value=0)
         logging.info("No truth VCF provided; continuing in unlabeled inference mode")
 
     run_step(
@@ -355,7 +505,13 @@ def main(argv=None):
     )
 
     filtered_count = filter_predictions(predictions, filtered_candidates, args.threshold)
-    vcf_count = write_filtered_vcf(predictions, filtered_vcf, args.threshold)
+    vcf_count = write_filtered_vcf(
+        predictions,
+        filtered_vcf,
+        args.threshold,
+        bam_path=args.bam,
+        contig_length=args.contig_length,
+    )
 
     if args.truth:
         run_step(
@@ -376,6 +532,9 @@ def main(argv=None):
     logging.info("Signals: %s", signals)
     logging.info("Extra signals: %s", extra_signals)
     logging.info("Candidates: %s", candidates)
+    if args.use_extra_candidates:
+        logging.info("Extra candidates: %s", extra_candidates)
+        logging.info("v0.3 merged candidates: %s", candidates_v3_merged)
     logging.info("Candidates for graph: %s", candidates_for_graph)
     logging.info("Graph dataset: %s", graph_dataset)
     logging.info("Predictions: %s", predictions)

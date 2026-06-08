@@ -8,13 +8,19 @@ import os
 import pandas as pd
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pred", required=True, help="Input predictions.tsv")
     parser.add_argument("--out", required=True, help="Output filtered.vcf")
     parser.add_argument("--threshold", type=float, default=0.5, help="Minimum GNN probability")
     parser.add_argument("--sample", default="ReadGraphSV", help="Sample name in the VCF FORMAT column")
-    return parser.parse_args()
+    parser.add_argument(
+        "--contig-length",
+        type=int,
+        default=None,
+        help="Optional VCF contig length to use for contigs observed in predictions",
+    )
+    return parser.parse_args(argv)
 
 
 def ensure_parent_dir(path):
@@ -69,9 +75,25 @@ def estimate_svlen(row):
     return max(1, abs(end - start))
 
 
-def write_header(handle, sample):
+def prediction_chroms(pred):
+    if pred.empty or "chrom" not in pred.columns:
+        return []
+    chroms = [str(chrom) for chrom in pred["chrom"].dropna().unique() if str(chrom)]
+    return sorted(chroms, key=chrom_sort_key)
+
+
+def write_contig_headers(handle, chroms, contig_length=None):
+    for chrom in chroms:
+        if contig_length is None:
+            print(f"##contig=<ID={chrom}>", file=handle)
+        else:
+            print(f"##contig=<ID={chrom},length={int(contig_length)}>", file=handle)
+
+
+def write_header(handle, sample, chroms=None, contig_length=None):
     print("##fileformat=VCFv4.2", file=handle)
     print("##source=ReadGraphSV_v0.1", file=handle)
+    write_contig_headers(handle, chroms or [], contig_length=contig_length)
     print('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="SV type">', file=handle)
     print('##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant">', file=handle)
     print('##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="SV length">', file=handle)
@@ -83,14 +105,15 @@ def write_header(handle, sample):
     print(f"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t{sample}", file=handle)
 
 
-def main():
-    args = parse_args()
+def main(argv=None):
+    args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     ensure_parent_dir(args.out)
 
     pred = read_predictions(args.pred)
+    chroms = prediction_chroms(pred)
     with open(args.out, "w") as handle:
-        write_header(handle, args.sample)
+        write_header(handle, args.sample, chroms=chroms, contig_length=args.contig_length)
 
         if pred.empty:
             logging.warning("Prediction file is empty; wrote VCF header only: %s", args.out)

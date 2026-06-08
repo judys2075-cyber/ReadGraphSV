@@ -1,6 +1,10 @@
 """Tests for candidate clustering, labeling, VCF export, and evaluation."""
 
+import shutil
+import subprocess
+
 import pandas as pd
+import pytest
 
 from conftest import run_cli
 
@@ -73,6 +77,7 @@ def test_cluster_label_export_and_evaluate(tmp_path):
     run_cli("export_vcf.py", "--pred", pred, "--threshold", "0.5", "--out", vcf)
     vcf_text = vcf.read_text()
     assert "##source=ReadGraphSV_v0.1" in vcf_text
+    assert "##contig=<ID=chr1>" in vcf_text
     assert '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">' in vcf_text
     assert "chr1\t111\tReadGraphSV_1\tN\t<DEL>" in vcf_text
     assert "SVLEN=-61" in vcf_text
@@ -81,3 +86,42 @@ def test_cluster_label_export_and_evaluate(tmp_path):
     evaluation_text = evaluation.read_text()
     assert "Raw Precision: 0.500000" in evaluation_text
     assert "GNN F1: 1.000000" in evaluation_text
+
+
+def test_export_vcf_writes_contig_length_and_sorts_with_bcftools(tmp_path):
+    pred = tmp_path / "predictions.tsv"
+    vcf = tmp_path / "filtered.vcf"
+    sorted_vcf = tmp_path / "sorted.vcf"
+    pred.write_text(
+        "candidate_id\tchrom\tstart\tend\tsvtype\tmedian_svlen\tsupport_read_count\tlabel\tgnn_prob\tgnn_pred\n"
+        "CAND_000001\t21\t100\t180\tDEL\t80\t3\t1\t0.91\t1\n"
+    )
+
+    run_cli(
+        "export_vcf.py",
+        "--pred",
+        pred,
+        "--threshold",
+        "0.5",
+        "--out",
+        vcf,
+        "--contig-length",
+        "48129895",
+    )
+
+    vcf_text = vcf.read_text()
+    assert '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">' in vcf_text
+    assert "##contig=<ID=21,length=48129895>" in vcf_text
+
+    if shutil.which("bcftools") is None:
+        pytest.skip("bcftools is not installed")
+
+    result = subprocess.run(
+        ["bcftools", "sort", "-Ov", "-o", str(sorted_vcf), str(vcf)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "not defined in the header" not in result.stderr
+    assert sorted_vcf.exists()
