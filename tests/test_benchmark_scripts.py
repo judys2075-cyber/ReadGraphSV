@@ -4,6 +4,7 @@ import csv
 import json
 
 import scripts.benchmark_truvari_delins as benchmark
+import scripts.truvari_threshold_sweep as threshold_sweep
 from scripts.benchmark_truvari_delins import parse_args as parse_benchmark_args
 from scripts.benchmark_truvari_delins import read_truvari_summary
 from scripts.truvari_threshold_sweep import write_threshold_vcf
@@ -140,6 +141,51 @@ def test_threshold_vcf_writer_includes_gt_format_header(tmp_path):
     assert "SVTYPE=DEL;END=180;SVLEN=-80;SUPPORT=3;GNN_PROB=0.900000" in text
     assert "CAND_2" not in text
     assert "chr20" not in text
+
+
+def test_threshold_sweep_truvari_command_includes_passonly_and_matching_params(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_run_command(command):
+        captured["command"] = command
+
+    monkeypatch.setattr(threshold_sweep, "run_command", fake_run_command)
+    args = threshold_sweep.parse_args(
+        [
+            "--predictions",
+            "predictions_v2.tsv",
+            "--truth",
+            "truth.vcf.gz",
+            "--bed",
+            "tier1.bed",
+            "--outdir",
+            str(tmp_path),
+            "--refdist",
+            "500",
+            "--pctsize",
+            "0.5",
+            "--sizemin",
+            "50",
+            "--pctseq",
+            "0",
+        ]
+    )
+
+    summary_path = threshold_sweep.run_truvari(args, 0.75, tmp_path / "candidate.vcf.gz")
+    command = captured["command"]
+
+    assert summary_path == tmp_path / "truvari_t0.75" / "summary.json"
+    assert "--includebed" in command
+    assert command[command.index("--includebed") + 1] == "tier1.bed"
+    assert "--passonly" in command
+    assert "--sizemin" in command
+    assert command[command.index("--sizemin") + 1] == "50"
+    assert "--refdist" in command
+    assert command[command.index("--refdist") + 1] == "500"
+    assert "--pctsize" in command
+    assert command[command.index("--pctsize") + 1] == "0.5"
+    assert "--pctseq" in command
+    assert float(command[command.index("--pctseq") + 1]) == 0.0
 
 
 def test_final_result_writer_generates_table_and_readme(tmp_path):

@@ -193,6 +193,7 @@ def run_truvari(args, threshold, candidate_vcf):
         str(output_dir),
         "--includebed",
         args.bed,
+        "--passonly",
         "--refdist",
         str(args.refdist),
         "--pctsize",
