@@ -1,96 +1,101 @@
 # ReadGraphSV
 
-ReadGraphSV is a prototype graph neural network framework for structural
-variant discovery from long-read alignments. The project focuses on turning
-alignment evidence from BAM files into explicit region-level graphs, so that a
-GNN can learn whether a candidate event is likely to represent a real
-structural variant.
+ReadGraphSV is a research prototype for long-read structural variant analysis.
+It converts evidence from BAM alignments into region-level read evidence graphs
+and uses a graph neural network (GNN) to score candidate DEL/INS variants.
 
-The first release, ReadGraphSV v0.1, targets deletion (DEL) and insertion (INS)
-candidate scoring. It scans primary and supplementary long-read alignments,
-extracts large CIGAR `D` and `I` operations, clusters nearby read-level signals
-into candidate SV regions, converts each candidate into a graph of read
-evidence, and applies a GraphSAGE model for graph-level binary classification.
+The current project is best viewed as a long-read DEL/INS candidate scoring
+framework based on read evidence graphs and GNNs. It is not yet a complete
+all-type SV caller. DUP, INV, TRA/BND, and complex SVs are planned future work.
 
-The central idea is simple: structural variants are not just isolated positions,
-but patterns of agreement among multiple read alignments. ReadGraphSV therefore
-represents each candidate as a small evidence graph:
+## Project Overview
 
-- one candidate node summarizes the putative SV region;
-- read evidence nodes represent supporting CIGAR-derived events;
-- graph edges connect reads to the candidate and connect similar read evidence
-  events to each other.
+ReadGraphSV starts from long-read BAM/SAM alignments and extracts several types
+of evidence around candidate structural variants:
 
-This design keeps the evidence interpretable and modular. The current
-implementation is intentionally compact, making it suitable for method
-development, benchmarking, and rapid experimentation with graph-based SV
-classification.
+- CIGAR-derived deletion and insertion events.
+- Soft-clipped read ends.
+- SA-tag connections.
+- Supplementary-alignment records.
 
-## Current Capabilities
+These signals are clustered into candidate regions and converted into PyTorch
+Geometric graphs. A GraphSAGE model scores each candidate, and an optional
+candidate-level deduplication step removes redundant nearby calls before VCF
+export and Truvari benchmarking.
 
-- Extract CIGAR-derived DEL and INS signals directly from long-read BAM files.
-- Extract v0.2 extra evidence from soft clips, SA tags, and supplementary
-  alignment records.
-- Build v0.2 evidence graphs that combine CIGAR DEL/INS nodes with soft-clip,
-  SA-connection, and supplementary-alignment nodes.
-- Cluster read-level signals into candidate SV regions.
-- Optionally label candidates against a truth VCF for supervised training and
-  evaluation.
-- Build PyTorch Geometric graph datasets from candidate regions.
-- Train a GraphSAGE model for true/false candidate classification.
-- Run one-command inference from BAM to filtered TSV and VCF output.
-- Evaluate raw candidate calls against GNN-filtered calls.
-- Merge multiple graph datasets for larger training runs.
+### At a Glance
 
-## Benchmark Results
+| Item | Current status |
+|---|---|
+| Main task | Long-read DEL/INS candidate scoring |
+| Input | Coordinate-sorted or unsorted BAM/SAM alignment files |
+| Evidence | CIGAR `D/I`, soft clips, SA tags, supplementary alignments |
+| Candidate graph | Candidate node plus read evidence nodes |
+| Model | GraphSAGE graph-level binary classifier |
+| Output | Filtered candidate TSV and symbolic DEL/INS VCF |
+| Latest recommended mode | v0.3 with extra candidates and optional deduplication |
+| Final benchmark | HG002 chr21 held-out DEL/INS benchmark with Truvari |
 
-ReadGraphSV evaluates two stages:
+### What Is New in v0.3
 
-- **Raw CIGAR candidates**: all clustered candidates are treated as positive
+ReadGraphSV v0.3 keeps the v0.2 GNN and graph construction interface, then adds
+two optional post-v0.2 workflow improvements:
+
+- Extra-evidence candidate proposal from softclip, SA-tag, and supplementary
+  signals.
+- Candidate-level deduplication after GNN filtering to reduce redundant nearby
   calls.
-- **ReadGraphSV GNN-filtered calls**: candidates are retained only when their
-  GNN probability is above the selected threshold.
 
-Example held-out chr21 evaluation:
+## Key Features
 
-| Method | Precision | Recall | F1 | AUC |
-|---|---:|---:|---:|---:|
-| Raw CIGAR candidates | 0.3589 | 1.0000 | 0.5282 | N/A |
-| ReadGraphSV GNN-filtered | 0.7628 | 0.9369 | 0.8410 | N/A |
+- Directly reads long-read BAM/SAM files with `pysam`.
+- Supports DEL and INS candidate generation and scoring.
+- Builds graph datasets with candidate, CIGAR evidence, and extra evidence
+  nodes.
+- Supports optional v0.3 extra-evidence candidate proposal and candidate
+  merging.
+- Supports optional NMS-style candidate-level deduplication after GNN scoring.
+- Exports symbolic DEL/INS VCF records with `GT` FORMAT and contig headers.
+- Includes training, prediction, evaluation, Truvari benchmark, threshold
+  sweep, and final result generation scripts.
+- Keeps experimental data, models, graph datasets, and large outputs outside
+  Git by default.
 
-In this run, GNN filtering reduced false positives from 368 to 60 while
-retaining 193 of 206 true positives. A reusable reporting template is available
-at `results/benchmark_template.md`.
+## Workflow
 
-## Coordinate Convention
-
-ReadGraphSV uses 0-based BAM-style coordinates internally. Deletions are
-represented as half-open intervals. Insertions are represented at the current
-reference position with `event_end = event_pos + 1`.
-
-Truth VCF positions are converted from 1-based VCF POS to 0-based coordinates
-during labeling.
+```mermaid
+flowchart TD
+    A[BAM / SAM] --> B[CIGAR DEL/INS evidence]
+    A --> C[Softclip / SA / supplementary evidence]
+    C --> D[Extra-evidence candidate proposal]
+    B --> E[CIGAR candidate clustering]
+    D --> F[Candidate merging]
+    E --> F
+    F --> G[Evidence graph construction]
+    C --> G
+    B --> G
+    G --> H[GNN scoring]
+    H --> I[Candidate-level deduplication]
+    I --> J[Final VCF]
+    J --> K[Truvari benchmark]
+```
 
 ## Installation
 
-Create a Python environment and install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-Alternatively, create a conda environment:
+Create a conda environment:
 
 ```bash
 conda env create -f environment.yml
 conda activate readgraphsv
 ```
 
-PyTorch Geometric installation can depend on your CUDA/PyTorch version. If the
-plain install fails, follow the official PyG wheel instructions for your
-machine.
+Or install from requirements:
 
-For development and tests:
+```bash
+pip install -r requirements.txt
+```
+
+For development:
 
 ```bash
 pip install -r requirements-dev.txt
@@ -98,331 +103,250 @@ python -m pytest -q
 python -m ruff check .
 ```
 
-## Reproducibility
+PyTorch Geometric installation may depend on your CUDA and PyTorch versions. If
+the plain install fails, use the official PyG wheel instructions for your
+system.
 
-ReadGraphSV is designed as a reproducible method prototype. Recommended
-practice:
+## Quick Start
 
-- Use `environment.yml` or pinned `requirements.txt` versions to create the
-  software environment.
-- Keep raw BAM files, truth VCFs, graph datasets, model checkpoints, and
-  prediction outputs outside version control.
-- Record candidate extraction parameters: `--min_size`, `--window`, and
-  `--min_support`.
-- For supervised experiments, split data into train, validation, and test sets.
-- Use validation data for model selection and threshold selection; reserve the
-  test set for final reporting.
-- Save `results/train_metrics.csv`, `results/test_metrics.txt`, and
-  `results/evaluation.txt` for each experiment.
-
-## One-Command Inference
-
-After training a model, run the full inference pipeline from BAM to filtered
-TSV and VCF:
-
-```bash
-python run_readgraphsv.py \
-  --bam aligned.bam \
-  --model models/readgraph_gnn.pt \
-  --outdir output \
-  --threshold 0.5
-```
-
-This creates:
-
-- `output/signals.tsv`
-- `output/candidates.tsv`
-- `output/candidates_for_graph.tsv`
-- `output/graph_dataset.pt`
-- `output/predictions.tsv`
-- `output/filtered_candidates.tsv`
-- `output/filtered.vcf`
-
-For optional evaluation against a truth VCF:
-
-```bash
-python run_readgraphsv.py \
-  --bam aligned.bam \
-  --model models/readgraph_gnn.pt \
-  --truth truth.vcf \
-  --outdir output \
-  --threshold 0.5
-```
-
-Evaluation mode additionally writes:
-
-- `output/candidates_labeled.tsv`
-- `output/evaluation.txt`
-
-### ReadGraphSV v0.2 One-Click Usage
-
-The v0.2 wrapper runs CIGAR signal extraction, candidate clustering, extra
-evidence extraction, v0.2 graph construction, GNN prediction, filtering, and
-VCF export:
+The recommended v0.3 inference command enables extra-evidence candidate
+proposal and candidate-level deduplication:
 
 ```bash
 python run_readgraphsv_v2.py \
   --bam real_data/HG002_chr21/bam/HG002_chr21.bam \
-  --model models/readgraph_gnn_v2_combined_001_002_003.pt \
-  --outdir runs/HG002_chr21_real \
-  --truth real_data/HG002_chr21/truth_chr21/HG002_chr21_DELINS_50.vcf.gz \
-  --threshold 0.5
-```
-
-Without `--truth`, v0.2 still runs in inference mode and writes
-`data/candidates_for_graph.tsv` with a placeholder `label` column.
-
-The v0.2 wrapper writes:
-
-- `outdir/data/signals.tsv`
-- `outdir/data/candidates.tsv`
-- `outdir/data/extra_signals.tsv`
-- `outdir/data/candidates_for_graph.tsv`
-- `outdir/graphs/dataset_v2.pt`
-- `outdir/results/predictions_v2.tsv`
-- `outdir/results/filtered_candidates.tsv`
-- `outdir/vcf/filtered.vcf`
-
-If `--truth` is provided, it also writes
-`outdir/data/candidates_labeled.tsv` and
-`outdir/results/evaluation_v2.txt`.
-
-ReadGraphSV v0.2 outputs symbolic DEL/INS VCF records with `FORMAT=GT` and
-genotype currently set to `./.`.
-
-### ReadGraphSV v0.3 Recommended Usage
-
-The v0.3 optional mode keeps the v0.2 graph/model pipeline intact, then enables
-extra-evidence candidate proposal and candidate-level deduplication:
-
-```bash
-python run_readgraphsv_v2.py \
-  --bam real_data/HG002_chr21/bam/HG002_chr21.bam \
-  --model models/readgraph_gnn_v3.pt \
+  --model models/readgraph_gnn_v3_extra_candidates_chr20_chr22.pt \
   --outdir runs/HG002_chr21_v3 \
   --truth real_data/HG002_chr21/truth_chr21/HG002_chr21_DELINS_50.vcf.gz \
   --threshold 0.65 \
+  --min_size 50 \
+  --cluster_window 500 \
+  --min_support 1 \
+  --extra_window 1000 \
+  --read_edge_window 100 \
+  --max_dist 500 \
+  --min_size_sim 0.5 \
   --use_extra_candidates \
+  --extra_candidate_window 500 \
+  --min_softclip_support 10 \
+  --min_sa_support 2 \
+  --min_supplementary_support 2 \
+  --min_extra_only_support 30 \
   --use_dedup \
   --dedup_window 500 \
   --dedup_min_size_sim 0.5
 ```
 
-When `--use_dedup` is enabled, the wrapper writes
-`outdir/results/filtered_candidates_dedup.tsv`,
-`outdir/results/dedup_summary.txt`, and `outdir/vcf/filtered_dedup.vcf`.
+For inference without a truth VCF, omit `--truth`. The pipeline will still
+build candidate graphs and produce predictions, filtered candidates, and VCF
+output.
 
-ReadGraphSV v0.3 consists of extra-evidence candidate proposal, GNN candidate
-scoring, and optional candidate-level deduplication. On the final HG002 chr21
-held-out DEL/INS benchmark, ReadGraphSV v0.3 trained + dedup reached
-Precision=0.929412, Recall=0.892655, and F1=0.910663. The final comparison
-table is maintained in
-`results/final_hg002_chr21/readgraphsv_v3_final_comparison.tsv`.
-
-ReadGraphSV v0.1 currently supports CIGAR-derived DEL/INS candidate scoring.
-Future versions are planned to add split-read signals, soft-clip rescue,
-edge-level prediction, and richer complex-SV graph representations.
-
-## Step-By-Step Pipeline
-
-Create output directories:
+### Common Command-Line Entry Points
 
 ```bash
-mkdir -p data graphs models results
+# Extract CIGAR-derived DEL/INS evidence
+python extract_cigar_events.py --bam aligned.bam --min_size 50 --out data/signals.tsv
+
+# Extract v0.2 extra evidence
+python extract_extra_events.py --bam aligned.bam --min_clip 50 --out data/extra_signals.tsv
+
+# Cluster CIGAR evidence into raw candidates
+python cluster_events.py --signals data/signals.tsv --window 500 --min_support 1 --out data/candidates.tsv
+
+# Propose v0.3 extra-evidence candidates
+python extra_candidate_proposer.py --extra data/extra_signals.tsv --out data/extra_candidates.tsv
+
+# Merge CIGAR and extra candidates
+python merge_candidates_v3.py --cigar-candidates data/candidates.tsv --extra-candidates data/extra_candidates.tsv --out data/candidates_v3_merged.tsv
+
+# Build enhanced graph dataset
+python build_graph_dataset_v2.py --signals data/signals.tsv --extra data/extra_signals.tsv --candidates data/candidates_labeled.tsv --out graphs/dataset_v2.pt
+
+# Train or fine-tune a GraphSAGE model
+python train_gnn.py --dataset graphs/dataset_v2.pt --model_out models/readgraph_gnn.pt --epochs 100
+
+# Predict candidate probabilities
+python predict_gnn.py --dataset graphs/dataset_v2.pt --model models/readgraph_gnn.pt --out results/predictions_v2.tsv
 ```
 
-Extract CIGAR DEL/INS signals:
+## ReadGraphSV v0.3 Recommended Command
+
+The v0.3 mode is optional and keeps the v0.2 graph/model pipeline compatible.
+It is enabled by two flags:
 
 ```bash
-python extract_cigar_events.py \
-  --bam aligned_chr21_10x_with_rg.bam \
-  --min_size 50 \
-  --out data/signals.tsv
+--use_extra_candidates
+--use_dedup
 ```
 
-Extract v0.2 soft-clip, SA-tag, and supplementary-alignment evidence:
+`--use_extra_candidates` adds extra-evidence candidate proposal and CIGAR/extra
+candidate merging. `--use_dedup` runs candidate-level deduplication after GNN
+filtering and writes a deduplicated VCF.
+
+Recommended v0.3 validation/test settings:
+
+```text
+threshold = 0.65
+extra_candidate_window = 500
+min_softclip_support = 10
+min_sa_support = 2
+min_supplementary_support = 2
+min_extra_only_support = 30
+dedup_window = 500
+dedup_min_size_sim = 0.5
+```
+
+## Output Files
+
+Default v0.2-compatible outputs:
+
+```text
+outdir/data/signals.tsv
+outdir/data/candidates.tsv
+outdir/data/extra_signals.tsv
+outdir/data/candidates_for_graph.tsv
+outdir/graphs/dataset_v2.pt
+outdir/results/predictions_v2.tsv
+outdir/results/filtered_candidates.tsv
+outdir/vcf/filtered.vcf
+```
+
+If `--truth` is provided:
+
+```text
+outdir/data/candidates_labeled.tsv
+outdir/results/evaluation_v2.txt
+```
+
+If `--use_extra_candidates` is enabled:
+
+```text
+outdir/data/extra_candidates.tsv
+outdir/data/candidates_v3_merged.tsv
+```
+
+If `--use_dedup` is enabled:
+
+```text
+outdir/results/filtered_candidates_dedup.tsv
+outdir/results/dedup_summary.txt
+outdir/vcf/filtered_dedup.vcf
+```
+
+## Benchmark Results
+
+Final HG002 chr21 held-out DEL/INS benchmark:
+
+| Method | Precision | Recall | F1 | TP | FP | FN |
+|---|---:|---:|---:|---:|---:|---:|
+| ReadGraphSV v0.2 real-finetuned | 0.897143 | 0.887006 | 0.892045 | 157 | 18 | 20 |
+| ReadGraphSV v0.3 trained | 0.898305 | 0.898305 | 0.898305 | 159 | 18 | 18 |
+| ReadGraphSV v0.3 trained + dedup | 0.929412 | 0.892655 | 0.910663 | 158 | 12 | 19 |
+| Sniffles2 | 0.923497 | 0.954802 | 0.938889 | 169 | 14 | 8 |
+| cuteSV | 0.822967 | 0.971751 | 0.891192 | 172 | 37 | 5 |
+| SVIM | 0.497024 | 0.943503 | 0.651072 | 167 | 169 | 10 |
+
+ReadGraphSV v0.3 + dedup outperformed cuteSV and SVIM in F1 and achieved higher
+precision than Sniffles2, while Sniffles2 remained the strongest overall caller
+due to higher recall and F1.
+
+Detailed final result files:
+
+```text
+results/final_hg002_chr21/readgraphsv_v3_final_comparison.tsv
+results/final_hg002_chr21/README_final_results.md
+```
+
+## Reproducibility
+
+Recommended reproducibility protocol:
+
+- Use `environment.yml` or the pinned `requirements.txt` files.
+- Keep large BAMs, graph datasets, model checkpoints, and raw benchmark outputs
+  outside Git.
+- Select model threshold on validation data. For v0.3, `threshold=0.65` was
+  selected on HG002 chr19 validation data.
+- Select deduplication parameters on validation data. For v0.3, chr19
+  validation supported `dedup_window=500` and `dedup_min_size_sim=0.5`.
+- Use held-out chromosomes for final reporting. HG002 chr21 was used only as
+  held-out test data for the final table.
+
+Truvari benchmark parameters used for the final HG002 chr21 benchmark:
 
 ```bash
-python extract_extra_events.py \
-  --bam aligned_chr21_10x_with_rg.bam \
-  --min_clip 50 \
-  --out data/extra_signals.tsv
+truvari bench \
+  --includebed <Tier1 BED> \
+  --passonly \
+  --refdist 500 \
+  --pctsize 0.5 \
+  --sizemin 50 \
+  --pctseq 0
 ```
 
-Cluster signals into candidate SVs:
+Related helper scripts:
 
-```bash
-python cluster_events.py \
-  --signals data/signals.tsv \
-  --window 500 \
-  --min_support 2 \
-  --out data/candidates.tsv
+```text
+scripts/benchmark_truvari_delins.py
+scripts/truvari_threshold_sweep.py
+scripts/write_final_v3_results.py
 ```
 
-Label candidates with a truth VCF:
+Extended project notes:
 
-```bash
-python label_candidates.py \
-  --candidates data/candidates.tsv \
-  --truth truth.vcf \
-  --max_dist 500 \
-  --min_size_sim 0.7 \
-  --out data/candidates_labeled.tsv
+```text
+docs/workflow.md
+docs/usage.md
+docs/benchmark.md
 ```
 
-Build a PyTorch Geometric graph dataset:
+## Project Structure
 
-```bash
-python build_graph_dataset.py \
-  --signals data/signals.tsv \
-  --candidates data/candidates_labeled.tsv \
-  --out graphs/dataset.pt
+```text
+readgraphsv/
+├── extract_cigar_events.py          # CIGAR DEL/INS signal extraction
+├── extract_extra_events.py          # softclip, SA tag, supplementary evidence
+├── cluster_events.py                # CIGAR candidate clustering
+├── extra_candidate_proposer.py      # v0.3 extra-evidence candidate proposal
+├── merge_candidates_v3.py           # CIGAR/extra candidate merging
+├── build_graph_dataset.py           # v0.1 graph builder
+├── build_graph_dataset_v2.py        # v0.2/v0.3 graph builder
+├── train_gnn.py                     # GraphSAGE training
+├── predict_gnn.py                   # GNN inference
+├── dedup_filtered_candidates.py     # optional candidate-level deduplication
+├── run_readgraphsv.py               # v0.1 one-command wrapper
+├── run_readgraphsv_v2.py            # v0.2/v0.3 one-command wrapper
+├── export_vcf.py                    # VCF export
+├── scripts/                         # benchmark and final-result utilities
+├── tests/                           # pytest suite
+├── docs/                            # extended usage and benchmark notes
+├── data/ graphs/ models/ results/   # local generated outputs
+└── requirements.txt / environment.yml
 ```
 
-Build a v0.2 enhanced graph dataset with extra evidence nodes:
+## Current Scope and Limitations
 
-```bash
-python build_graph_dataset_v2.py \
-  --signals data/signals.tsv \
-  --extra data/extra_signals.tsv \
-  --candidates data/candidates_labeled.tsv \
-  --extra_window 1000 \
-  --read_edge_window 100 \
-  --out graphs/dataset_v2.pt
-```
+- Current versions mainly support DEL and INS.
+- ReadGraphSV is not yet a complete all-type SV caller.
+- DUP, INV, TRA/BND, and complex SVs are future work.
+- Current VCF records use symbolic DEL/INS alleles and simple genotype output.
+- Current best use is method research: candidate generation, read evidence
+  graph construction, GNN scoring, filtering, and benchmarking.
 
-To train with v0.2 features, pass `--dataset graphs/dataset_v2.pt` to
-`train_gnn.py`.
+## Roadmap
 
-Train the GNN:
+- **v0.1**: CIGAR-based DEL/INS candidate graph scoring.
+- **v0.2**: Add softclip, SA tag, and supplementary alignment evidence into
+  graph features.
+- **v0.3**: Add extra-evidence candidate proposal, candidate merging, GNN
+  scoring, and optional candidate-level deduplication.
+- **v0.4**: Add edge attributes, breakpoint refinement, and representation
+  correction.
+- **v0.5**: Extend from DEL/INS to DUP, INV, TRA/BND, and complex SVs.
 
-```bash
-python train_gnn.py \
-  --dataset graphs/dataset.pt \
-  --model_out models/readgraph_gnn.pt \
-  --epochs 100 \
-  --val_ratio 0.1 \
-  --test_ratio 0.2 \
-  --auto_threshold
-```
+## Citation / Contact
 
-Fine-tune a v0.2 model on real data with an independent validation dataset:
+Citation information will be added when the method manuscript or preprint is
+available.
 
-```bash
-python train_gnn.py \
-  --dataset graphs/HG002_real_train_chr20_chr22.pt \
-  --val_dataset runs/HG002_chr19_real/graphs/dataset_v2.pt \
-  --init_model models/readgraph_gnn_v2_combined_001_002_003.pt \
-  --model_out models/readgraph_gnn_v2_real_finetuned_chr20_chr22.pt \
-  --epochs 80 \
-  --lr 0.0001 \
-  --hidden 64 \
-  --class_weight auto \
-  --patience 15 \
-  --seed 42
-```
-
-Predict candidate probabilities:
-
-```bash
-python predict_gnn.py \
-  --dataset graphs/dataset.pt \
-  --model models/readgraph_gnn.pt \
-  --out results/predictions.tsv
-```
-
-Evaluate raw candidate calls versus GNN-filtered calls:
-
-```bash
-python evaluate_predictions.py \
-  --pred results/predictions.tsv \
-  --threshold 0.5 \
-  --out results/evaluation.txt
-```
-
-Merge multiple graph datasets:
-
-```bash
-python merge_datasets.py \
-  --inputs graphs/dataset.pt runs/chr21_002/graphs/dataset.pt runs/chr21_003/graphs/dataset.pt \
-  --out graphs/combined_chr21_001_002_003.pt
-```
-
-Export filtered predictions to VCF:
-
-```bash
-python export_vcf.py \
-  --pred results/predictions.tsv \
-  --threshold 0.5 \
-  --out results/filtered.vcf
-```
-
-## Files
-
-- `extract_cigar_events.py`: scans primary and supplementary alignments and
-  emits large CIGAR DEL/INS events.
-- `extract_extra_events.py`: extracts v0.2 soft-clip, SA-tag connection, and
-  supplementary-alignment evidence from BAM/SAM records.
-- `cluster_events.py`: groups nearby same-type signals into candidate SVs.
-- `label_candidates.py`: labels candidates by matching DEL/INS truth VCF
-  records.
-- `build_graph_dataset.py`: builds one region-level PyG graph per candidate.
-- `build_graph_dataset_v2.py`: builds enhanced v0.2 PyG graphs with candidate,
-  CIGAR evidence, and extra evidence nodes.
-- `train_gnn.py`: trains a GraphSAGE binary graph classifier.
-- `predict_gnn.py`: runs a trained model on candidate graphs.
-- `evaluate_predictions.py`: compares raw candidates with GNN-filtered
-  candidates.
-- `dedup_filtered_candidates.py`: performs optional NMS-style candidate-level
-  deduplication after GNN filtering.
-- `merge_datasets.py`: merges multiple PyG `dataset.pt` files.
-- `run_readgraphsv.py`: runs the v0.1 inference pipeline end to end.
-- `run_readgraphsv_v2.py`: runs the v0.2 CIGAR plus extra-evidence inference
-  pipeline end to end.
-- `export_vcf.py`: exports filtered DEL/INS predictions as a simple VCF.
-
-## v0.1 Scope
-
-The first version is intentionally narrow:
-
-- DEL and INS only.
-- CIGAR-derived evidence only.
-- Candidate node plus read evidence nodes.
-- Graph-level binary classification.
-
-## v0.2 Extra Evidence
-
-ReadGraphSV v0.2 adds a standalone extra evidence extractor for signals that
-are useful for split-read and complex-SV modeling:
-
-- `SOFTCLIP_LEFT` and `SOFTCLIP_RIGHT` evidence from large terminal soft clips.
-- `SA_CONNECTION` evidence from primary-alignment `SA:Z` tags, with destination
-  segment coordinates, orientation changes, chromosome changes, destination
-  MAPQ, SA CIGAR, and NM values.
-- `SUPPLEMENTARY` evidence from records carrying the supplementary alignment
-  flag.
-
-All extra evidence coordinates are 0-based. The extractor scans BAM/SAM records
-in file order and does not require an index. If a BAM contains no qualifying
-soft clips, SA tags, or supplementary records, it still writes a valid TSV with
-only the header.
-
-The v0.2 graph builder consumes both `signals.tsv` and `extra_signals.tsv`.
-Each graph keeps the v0.1 candidate and CIGAR evidence nodes, then adds nearby
-soft-clip, SA-connection, and supplementary-alignment nodes. Candidate-to-
-evidence edges are always bidirectional, and nearby evidence nodes are connected
-when their graph positions fall within `--read_edge_window`.
-
-## Development Roadmap
-
-Planned development path:
-
-- **v0.2**: extract SA tag, soft-clip, and supplementary-alignment evidence,
-  then integrate these signals into graph features.
-- **v0.3**: add edge attributes such as position distance, SV length
-  similarity, same-read links, same-strand links, and orientation-change
-  indicators.
-- **v0.4**: extend from binary candidate filtering to multi-task learning:
-  true/false classification, SV type classification, and breakpoint refinement.
-- **v0.5**: expand beyond DEL/INS toward inversion, duplication,
-  translocation, and complex-SV graph representations.
+Contact placeholder: please open a GitHub issue or contact the project
+maintainer for questions about reproducing the benchmark.

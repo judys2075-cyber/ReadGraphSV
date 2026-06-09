@@ -569,7 +569,17 @@ def main(argv=None):
             ],
         )
 
+    candidate_count = count_tsv_rows(candidate_input)
+
     logging.info("ReadGraphSV v0.2 pipeline finished")
+    logging.info("==== ReadGraphSV run summary ====")
+    logging.info("Candidate input: %s (%d candidates)", candidate_input, candidate_count)
+    logging.info("Filtered candidates: %s (%d candidates)", filtered_candidates, filtered_count)
+    if args.use_dedup:
+        logging.info("Deduplicated candidates: %s (%d candidates)", filtered_candidates_dedup, final_filtered_count)
+    else:
+        logging.info("Deduplicated candidates: not enabled")
+    logging.info("Final VCF: %s (%d records)", final_vcf, vcf_count)
     logging.info("Signals: %s", signals)
     logging.info("Extra signals: %s", extra_signals)
     logging.info("Candidates: %s", candidates)
