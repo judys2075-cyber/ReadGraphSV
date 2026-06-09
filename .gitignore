@@ -12,6 +12,9 @@ output*/
 # Keep directory placeholders if they are added later.
 !.gitkeep
 !results/benchmark_template.md
+!results/final_hg002_chr21/
+!results/final_hg002_chr21/readgraphsv_v3_final_comparison.tsv
+!results/final_hg002_chr21/README_final_results.md
 
 # Local notebooks and logs
 .ipynb_checkpoints/

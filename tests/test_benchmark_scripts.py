@@ -5,6 +5,7 @@ import json
 
 import scripts.benchmark_truvari_delins as benchmark
 import scripts.truvari_threshold_sweep as threshold_sweep
+import scripts.write_final_v3_results as final_v3
 from scripts.benchmark_truvari_delins import parse_args as parse_benchmark_args
 from scripts.benchmark_truvari_delins import read_truvari_summary
 from scripts.truvari_threshold_sweep import write_threshold_vcf
@@ -236,3 +237,86 @@ def test_final_result_writer_generates_table_and_readme(tmp_path):
     assert cutesv_row[7] == "5"
     assert cutesv_row[8] == str(cutesv_summary)
     assert cutesv_row[7] != f"5{cutesv_summary}"
+
+
+def test_final_v3_result_writer_generates_table_and_readme(tmp_path):
+    v02_summary = tmp_path / "v02_summary.json"
+    v03_summary = tmp_path / "v03_summary.json"
+    v03_dedup_summary = tmp_path / "v03_dedup_summary.json"
+    sniffles_summary = tmp_path / "sniffles_summary.json"
+    cutesv_summary = tmp_path / "cutesv_summary.json"
+    svim_summary = tmp_path / "svim_summary.json"
+    outdir = tmp_path / "final_v3"
+    write_mock_summary(v02_summary, precision=0.897143, recall=0.887006, f1=0.892045, tp_comp=157, tp_base=157, fp=18, fn=20)
+    write_mock_summary(v03_summary, precision=0.898305, recall=0.898305, f1=0.898305, tp_comp=159, tp_base=159, fp=18, fn=18)
+    write_mock_summary(
+        v03_dedup_summary,
+        precision=0.9294117647,
+        recall=0.8926553672,
+        f1=0.9106628242,
+        tp_comp=158,
+        tp_base=158,
+        fp=12,
+        fn=19,
+    )
+    write_mock_summary(sniffles_summary, precision=0.923497, recall=0.954802, f1=0.938889, tp_comp=169, tp_base=169, fp=14, fn=8)
+    write_mock_summary(cutesv_summary, precision=0.822967, recall=0.971751, f1=0.891192, tp_comp=172, tp_base=172, fp=37, fn=5)
+    write_mock_summary(svim_summary, precision=0.497024, recall=0.943503, f1=0.651072, tp_comp=167, tp_base=167, fp=169, fn=10)
+
+    args = final_v3.parse_args(
+        [
+            "--readgraphsv-v02-summary",
+            str(v02_summary),
+            "--readgraphsv-v03-summary",
+            str(v03_summary),
+            "--readgraphsv-v03-dedup-summary",
+            str(v03_dedup_summary),
+            "--sniffles2-summary",
+            str(sniffles_summary),
+            "--cutesv-summary",
+            str(cutesv_summary),
+            "--svim-summary",
+            str(svim_summary),
+            "--truth-vcf",
+            "truth.vcf.gz",
+            "--tier1-bed",
+            "tier1.bed",
+            "--outdir",
+            str(outdir),
+        ]
+    )
+    table_path, readme_path = final_v3.write_final_v3_results(args)
+
+    table = table_path.read_text()
+    readme = readme_path.read_text()
+    assert table_path.name == "readgraphsv_v3_final_comparison.tsv"
+    assert "ReadGraphSV v0.3 trained + dedup\t0.929412\t0.892655\t0.910663\t158\t158\t12\t19" in table
+    assert "Sniffles2\t0.923497\t0.954802\t0.938889\t169\t169\t14\t8" in table
+    assert "HG002 chr21 held-out benchmark" in readme
+    assert "`truth.vcf.gz`" in readme
+    assert "`tier1.bed`" in readme
+    assert "--passonly" in readme
+    assert "--use_extra_candidates" in readme
+    assert "--use_dedup" in readme
+    assert "threshold=0.65" in readme
+    assert "chr21 final benchmark was used only as the held-out test" in readme
+    assert "ReadGraphSV v0.3 + dedup achieved F1=0.9107" in readme
+
+
+def test_final_v3_result_writer_reports_missing_summary(tmp_path):
+    args = final_v3.parse_args(
+        [
+            "--readgraphsv-v02-summary",
+            str(tmp_path / "missing.json"),
+            "--outdir",
+            str(tmp_path / "final_v3"),
+        ]
+    )
+
+    try:
+        final_v3.write_final_v3_results(args)
+    except FileNotFoundError as exc:
+        assert "ReadGraphSV v0.2 real-finetuned" in str(exc)
+        assert "missing.json" in str(exc)
+    else:
+        raise AssertionError("Expected missing summary to raise FileNotFoundError")
