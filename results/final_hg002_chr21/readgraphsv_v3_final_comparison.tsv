@@ -1,0 +1,7 @@
+Tool	Precision	Recall	F1	TP-comp	TP-base	FP	FN	Summary
+ReadGraphSV v0.2 real-finetuned	0.897143	0.887006	0.892045	157	157	18	20	results/reproduce_hg002_chr21_benchmark/truvari_readgraphsv/summary.json
+ReadGraphSV v0.3 trained	0.898305	0.898305	0.898305	159	159	18	18	results/v3_trained_model_chr21_benchmark_t065/truvari_readgraphsv/summary.json
+ReadGraphSV v0.3 trained + dedup	0.929412	0.892655	0.910663	158	158	12	19	results/v3_dedup_chr21_benchmark_w500_s05/truvari_readgraphsv/summary.json
+Sniffles2	0.923497	0.954802	0.938889	169	169	14	8	results/reproduce_hg002_chr21_benchmark/truvari_sniffles2/summary.json
+cuteSV	0.822967	0.971751	0.891192	172	172	37	5	results/reproduce_hg002_chr21_benchmark/truvari_cutesv/summary.json
+SVIM	0.497024	0.943503	0.651072	167	167	169	10	results/reproduce_hg002_chr21_benchmark/truvari_svim/summary.json

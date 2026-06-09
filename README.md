@@ -212,6 +212,13 @@ When `--use_dedup` is enabled, the wrapper writes
 `outdir/results/filtered_candidates_dedup.tsv`,
 `outdir/results/dedup_summary.txt`, and `outdir/vcf/filtered_dedup.vcf`.
 
+ReadGraphSV v0.3 consists of extra-evidence candidate proposal, GNN candidate
+scoring, and optional candidate-level deduplication. On the final HG002 chr21
+held-out DEL/INS benchmark, ReadGraphSV v0.3 trained + dedup reached
+Precision=0.929412, Recall=0.892655, and F1=0.910663. The final comparison
+table is maintained in
+`results/final_hg002_chr21/readgraphsv_v3_final_comparison.tsv`.
+
 ReadGraphSV v0.1 currently supports CIGAR-derived DEL/INS candidate scoring.
 Future versions are planned to add split-read signals, soft-clip rescue,
 edge-level prediction, and richer complex-SV graph representations.
