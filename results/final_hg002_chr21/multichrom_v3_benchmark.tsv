@@ -1,0 +1,5 @@
+Chromosome	Role	Precision	Recall	F1	TP-comp	TP-base	FP	FN	BaseCount	CompCount	Summary
+chr19	validation	0.956386292834891	0.9446153846153846	0.9504643962848297	307	307	14	18	325	321	results/v3_dedup_chr19_benchmark_w500_s05/truvari_readgraphsv/summary.json
+chr20	training	0.933579335793358	0.947565543071161	0.9405204460966543	253	253	18	14	267	271	results/v3_full_pipeline_dedup_chr20_benchmark/truvari_readgraphsv/summary.json
+chr21	primary held-out test	0.9294117647058824	0.8926553672316384	0.9106628242074928	158	158	12	19	177	170	results/v3_full_pipeline_dedup_chr21_benchmark/truvari_readgraphsv/summary.json
+chr22	training	0.9263157894736842	0.9513513513513514	0.9386666666666668	176	176	14	9	185	190	results/v3_full_pipeline_dedup_chr22_benchmark/truvari_readgraphsv/summary.json
