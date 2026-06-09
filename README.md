@@ -190,6 +190,28 @@ If `--truth` is provided, it also writes
 ReadGraphSV v0.2 outputs symbolic DEL/INS VCF records with `FORMAT=GT` and
 genotype currently set to `./.`.
 
+### ReadGraphSV v0.3 Recommended Usage
+
+The v0.3 optional mode keeps the v0.2 graph/model pipeline intact, then enables
+extra-evidence candidate proposal and candidate-level deduplication:
+
+```bash
+python run_readgraphsv_v2.py \
+  --bam real_data/HG002_chr21/bam/HG002_chr21.bam \
+  --model models/readgraph_gnn_v3.pt \
+  --outdir runs/HG002_chr21_v3 \
+  --truth real_data/HG002_chr21/truth_chr21/HG002_chr21_DELINS_50.vcf.gz \
+  --threshold 0.65 \
+  --use_extra_candidates \
+  --use_dedup \
+  --dedup_window 500 \
+  --dedup_min_size_sim 0.5
+```
+
+When `--use_dedup` is enabled, the wrapper writes
+`outdir/results/filtered_candidates_dedup.tsv`,
+`outdir/results/dedup_summary.txt`, and `outdir/vcf/filtered_dedup.vcf`.
+
 ReadGraphSV v0.1 currently supports CIGAR-derived DEL/INS candidate scoring.
 Future versions are planned to add split-read signals, soft-clip rescue,
 edge-level prediction, and richer complex-SV graph representations.
@@ -344,6 +366,8 @@ python export_vcf.py \
 - `predict_gnn.py`: runs a trained model on candidate graphs.
 - `evaluate_predictions.py`: compares raw candidates with GNN-filtered
   candidates.
+- `dedup_filtered_candidates.py`: performs optional NMS-style candidate-level
+  deduplication after GNN filtering.
 - `merge_datasets.py`: merges multiple PyG `dataset.pt` files.
 - `run_readgraphsv.py`: runs the v0.1 inference pipeline end to end.
 - `run_readgraphsv_v2.py`: runs the v0.2 CIGAR plus extra-evidence inference

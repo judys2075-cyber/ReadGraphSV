@@ -94,6 +94,10 @@ def test_parse_args_for_v2_pipeline():
     assert args.min_supplementary_support == 2
     assert args.min_extra_only_support == 30
     assert args.extra_candidate_min_size == args.min_size
+    assert args.use_dedup is False
+    assert args.dedup_window == 500
+    assert args.dedup_min_size_sim == 0.5
+    assert args.dedup_score_col == "gnn_prob"
 
 
 def test_parse_args_for_v3_extra_candidate_options():
@@ -120,6 +124,13 @@ def test_parse_args_for_v3_extra_candidate_options():
             "40",
             "--extra_candidate_min_size",
             "100",
+            "--use_dedup",
+            "--dedup_window",
+            "750",
+            "--dedup_min_size_sim",
+            "0.7",
+            "--dedup_score_col",
+            "custom_score",
         ]
     )
     assert args.use_extra_candidates is True
@@ -129,6 +140,10 @@ def test_parse_args_for_v3_extra_candidate_options():
     assert args.min_supplementary_support == 4
     assert args.min_extra_only_support == 40
     assert args.extra_candidate_min_size == 100
+    assert args.use_dedup is True
+    assert args.dedup_window == 750
+    assert args.dedup_min_size_sim == 0.7
+    assert args.dedup_score_col == "custom_score"
 
 
 def test_run_readgraphsv_v2_without_truth_generates_candidates_for_graph(tmp_path):
@@ -155,6 +170,8 @@ def test_run_readgraphsv_v2_without_truth_generates_candidates_for_graph(tmp_pat
     assert_common_outputs(outdir)
     assert not (outdir / "data/extra_candidates.tsv").exists()
     assert not (outdir / "data/candidates_v3_merged.tsv").exists()
+    assert not (outdir / "results/filtered_candidates_dedup.tsv").exists()
+    assert not (outdir / "vcf/filtered_dedup.vcf").exists()
     candidates_for_graph = pd.read_csv(outdir / "data/candidates_for_graph.tsv", sep="\t")
     assert "label" in candidates_for_graph.columns
     assert set(candidates_for_graph["label"].astype(int)) == {0}
@@ -236,7 +253,7 @@ def write_minimal_tsv(path, rows):
     pd.DataFrame(rows).to_csv(path, sep="\t", index=False)
 
 
-def install_mocked_v2_pipeline(monkeypatch, commands):
+def install_mocked_v2_pipeline(monkeypatch, commands, vcf_calls=None):
     def fake_run_step(_name, command):
         commands.append(command)
         script = command[1].split("/")[-1]
@@ -281,14 +298,75 @@ def install_mocked_v2_pipeline(monkeypatch, commands):
                     },
                 ],
             )
+        elif script == "dedup_filtered_candidates.py":
+            write_minimal_tsv(
+                Path(out),
+                [
+                    {
+                        "candidate_id": "CAND_000001",
+                        "chrom": "chr1",
+                        "start": 200,
+                        "end": 300,
+                        "svtype": "DEL",
+                        "median_svlen": 100,
+                        "support_read_count": 2,
+                        "label": 0,
+                        "gnn_prob": 0.9,
+                        "gnn_pred": 1,
+                        "candidate_source": "CIGAR_ONLY",
+                    }
+                ],
+            )
+            (Path(out).parent / "dedup_summary.txt").write_text(
+                "Input candidates: 2\nOutput candidates: 1\nRemoved candidates: 1\nRemoved by svtype:\nDEL\t1\n"
+            )
         elif out:
             Path(out).parent.mkdir(parents=True, exist_ok=True)
             Path(out).write_text("")
 
+    def fake_filter_predictions(_predictions_path, out_path, _threshold):
+        write_minimal_tsv(
+            Path(out_path),
+            [
+                {
+                    "candidate_id": "CAND_000001",
+                    "chrom": "chr1",
+                    "start": 200,
+                    "end": 300,
+                    "svtype": "DEL",
+                    "median_svlen": 100,
+                    "support_read_count": 2,
+                    "label": 0,
+                    "gnn_prob": 0.9,
+                    "gnn_pred": 1,
+                    "candidate_source": "CIGAR_ONLY",
+                },
+                {
+                    "candidate_id": "CAND_000002",
+                    "chrom": "chr1",
+                    "start": 220,
+                    "end": 320,
+                    "svtype": "DEL",
+                    "median_svlen": 100,
+                    "support_read_count": 1,
+                    "label": 0,
+                    "gnn_prob": 0.8,
+                    "gnn_pred": 1,
+                    "candidate_source": "CIGAR_ONLY",
+                },
+            ],
+        )
+        return 2
+
+    def fake_write_filtered_vcf(*args, **kwargs):
+        if vcf_calls is not None:
+            vcf_calls.append((args, kwargs))
+        return 1
+
     monkeypatch.setattr(run_readgraphsv_v2, "check_inputs", lambda _args: None)
     monkeypatch.setattr(run_readgraphsv_v2, "run_step", fake_run_step)
-    monkeypatch.setattr(run_readgraphsv_v2, "filter_predictions", lambda *_args: 0)
-    monkeypatch.setattr(run_readgraphsv_v2, "write_filtered_vcf", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(run_readgraphsv_v2, "filter_predictions", fake_filter_predictions)
+    monkeypatch.setattr(run_readgraphsv_v2, "write_filtered_vcf", fake_write_filtered_vcf)
 
 
 def command_script_names(commands):
@@ -297,7 +375,8 @@ def command_script_names(commands):
 
 def test_default_pipeline_does_not_call_v3_candidate_tools(monkeypatch, tmp_path):
     commands = []
-    install_mocked_v2_pipeline(monkeypatch, commands)
+    vcf_calls = []
+    install_mocked_v2_pipeline(monkeypatch, commands, vcf_calls=vcf_calls)
     outdir = tmp_path / "default_pipeline"
 
     run_readgraphsv_v2.main(["--bam", "input.bam", "--model", "model.pt", "--outdir", str(outdir)])
@@ -305,6 +384,9 @@ def test_default_pipeline_does_not_call_v3_candidate_tools(monkeypatch, tmp_path
     script_names = command_script_names(commands)
     assert "extra_candidate_proposer.py" not in script_names
     assert "merge_candidates_v3.py" not in script_names
+    assert "dedup_filtered_candidates.py" not in script_names
+    assert vcf_calls[0][0][0] == str(outdir / "results/filtered_candidates.tsv")
+    assert vcf_calls[0][0][1] == str(outdir / "vcf/filtered.vcf")
     candidates_for_graph = pd.read_csv(outdir / "data/candidates_for_graph.tsv", sep="\t")
     assert set(candidates_for_graph["candidate_source"]) == {"CIGAR_ONLY"}
 
@@ -337,3 +419,33 @@ def test_use_extra_candidates_calls_v3_tools_and_uses_merged_candidates(monkeypa
     candidates_for_graph = pd.read_csv(outdir / "data/candidates_for_graph.tsv", sep="\t")
     assert "EXTRA_ONLY" in set(candidates_for_graph["candidate_source"])
     assert "label" in candidates_for_graph.columns
+
+
+def test_use_dedup_calls_dedup_and_exports_dedup_vcf(monkeypatch, tmp_path):
+    commands = []
+    vcf_calls = []
+    install_mocked_v2_pipeline(monkeypatch, commands, vcf_calls=vcf_calls)
+    outdir = tmp_path / "dedup_pipeline"
+
+    run_readgraphsv_v2.main(
+        [
+            "--bam",
+            "input.bam",
+            "--model",
+            "model.pt",
+            "--outdir",
+            str(outdir),
+            "--use_dedup",
+            "--dedup_window",
+            "500",
+            "--dedup_min_size_sim",
+            "0.5",
+        ]
+    )
+
+    script_names = command_script_names(commands)
+    assert "dedup_filtered_candidates.py" in script_names
+    assert (outdir / "results/filtered_candidates_dedup.tsv").exists()
+    assert (outdir / "results/dedup_summary.txt").exists()
+    assert vcf_calls[0][0][0] == str(outdir / "results/filtered_candidates_dedup.tsv")
+    assert vcf_calls[0][0][1] == str(outdir / "vcf/filtered_dedup.vcf")

@@ -80,6 +80,10 @@ def parse_args(argv=None):
         default=None,
         help="Minimum size for v0.3 extra candidate proposal; defaults to --min_size",
     )
+    parser.add_argument("--use_dedup", action="store_true", help="Enable VCF/candidate-level deduplication after GNN filtering")
+    parser.add_argument("--dedup_window", type=int, default=500, help="Maximum start distance for deduplication")
+    parser.add_argument("--dedup_min_size_sim", type=float, default=0.5, help="Minimum size similarity for deduplication")
+    parser.add_argument("--dedup_score_col", default="gnn_prob", help="Score column used to choose dedup representatives")
     args = parser.parse_args(argv)
     if args.extra_candidate_min_size is None:
         args.extra_candidate_min_size = args.min_size
@@ -339,8 +343,11 @@ def main(argv=None):
     graph_dataset = os.path.join(graph_dir, "dataset_v2.pt")
     predictions = os.path.join(results_dir, "predictions_v2.tsv")
     filtered_candidates = os.path.join(results_dir, "filtered_candidates.tsv")
+    filtered_candidates_dedup = os.path.join(results_dir, "filtered_candidates_dedup.tsv")
+    dedup_summary = os.path.join(results_dir, "dedup_summary.txt")
     evaluation = os.path.join(results_dir, "evaluation_v2.txt")
     filtered_vcf = os.path.join(vcf_dir, "filtered.vcf")
+    filtered_dedup_vcf = os.path.join(vcf_dir, "filtered_dedup.vcf")
 
     logging.info("ReadGraphSV v0.2 inference pipeline")
     logging.info("Output directory: %s", outdir)
@@ -505,9 +512,43 @@ def main(argv=None):
     )
 
     filtered_count = filter_predictions(predictions, filtered_candidates, args.threshold)
+    vcf_input = filtered_candidates
+    final_vcf = filtered_vcf
+    final_filtered_count = filtered_count
+
+    if args.use_dedup:
+        logging.info("Dedup enabled")
+        run_step(
+            "Deduplicate filtered candidates",
+            [
+                sys.executable,
+                script_path("dedup_filtered_candidates.py"),
+                "--filtered",
+                filtered_candidates,
+                "--labeled",
+                candidates_labeled,
+                "--out",
+                filtered_candidates_dedup,
+                "--window",
+                str(args.dedup_window),
+                "--min-size-sim",
+                str(args.dedup_min_size_sim),
+                "--score-col",
+                args.dedup_score_col,
+            ],
+        )
+        dedup_count = count_tsv_rows(filtered_candidates_dedup)
+        removed_count = max(0, filtered_count - dedup_count)
+        logging.info("Dedup input candidates: %d", filtered_count)
+        logging.info("Dedup output candidates: %d", dedup_count)
+        logging.info("Removed candidates: %d", removed_count)
+        vcf_input = filtered_candidates_dedup
+        final_vcf = filtered_dedup_vcf
+        final_filtered_count = dedup_count
+
     vcf_count = write_filtered_vcf(
-        predictions,
-        filtered_vcf,
+        vcf_input,
+        final_vcf,
         args.threshold,
         bam_path=args.bam,
         contig_length=args.contig_length,
@@ -539,7 +580,11 @@ def main(argv=None):
     logging.info("Graph dataset: %s", graph_dataset)
     logging.info("Predictions: %s", predictions)
     logging.info("Filtered candidates: %s (%d records)", filtered_candidates, filtered_count)
-    logging.info("Filtered VCF: %s (%d records)", filtered_vcf, vcf_count)
+    if args.use_dedup:
+        logging.info("Deduplicated filtered candidates: %s (%d records)", filtered_candidates_dedup, final_filtered_count)
+        logging.info("Dedup summary: %s", dedup_summary)
+    logging.info("Filtered VCF: %s (%d records)", final_vcf, vcf_count)
+    logging.info("Final VCF path: %s", final_vcf)
     if args.truth:
         logging.info("Labeled candidates: %s", candidates_labeled)
         logging.info("Evaluation: %s", evaluation)
