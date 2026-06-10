@@ -1,0 +1,17 @@
+Chromosome	Role	Tool	Precision	Recall	F1	TP-comp	TP-base	FP	FN	BaseCount	CompCount	Summary
+chr19	validation	ReadGraphSV v0.3 + dedup	0.956386	0.944615	0.950464	307	307	14	18	325	321	results/v3_dedup_chr19_benchmark_w500_s05/truvari_readgraphsv/summary.json
+chr19	validation	Sniffles2	0.946108	0.972308	0.959029	316	316	18	9	325	334	results/tool_benchmark_chr19/sniffles2/truvari_sniffles2/summary.json
+chr19	validation	cuteSV	0.939683	0.910769	0.925000	296	296	19	29	325	315	results/tool_benchmark_chr19/cutesv/truvari_cutesv/summary.json
+chr19	validation	SVIM	0.544194	0.966154	0.696231	314	314	263	11	325	577	results/tool_benchmark_chr19/svim/truvari_svim/summary.json
+chr20	training	ReadGraphSV v0.3 + dedup	0.933579	0.947566	0.940520	253	253	18	14	267	271	results/v3_full_pipeline_dedup_chr20_benchmark/truvari_readgraphsv/summary.json
+chr20	training	Sniffles2	0.942029	0.973783	0.957643	260	260	16	7	267	276	results/tool_benchmark_chr20/sniffles2/truvari_sniffles2/summary.json
+chr20	training	cuteSV	0.929104	0.932584	0.930841	249	249	19	18	267	268	results/tool_benchmark_chr20/cutesv/truvari_cutesv/summary.json
+chr20	training	SVIM	0.515337	0.943820	0.666667	252	252	237	15	267	489	results/tool_benchmark_chr20/svim/truvari_svim/summary.json
+chr21	primary held-out test	ReadGraphSV v0.3 + dedup	0.929412	0.892655	0.910663	158	158	12	19	177	170	results/v3_full_pipeline_dedup_chr21_benchmark/truvari_readgraphsv/summary.json
+chr21	primary held-out test	Sniffles2	0.923497	0.954802	0.938889	169	169	14	8	177	183	results/tool_benchmark_chr21/sniffles2/truvari_sniffles2/summary.json
+chr21	primary held-out test	cuteSV	0.920455	0.915254	0.917847	162	162	14	15	177	176	results/tool_benchmark_chr21/cutesv/truvari_cutesv/summary.json
+chr21	primary held-out test	SVIM	0.495601	0.954802	0.652510	169	169	172	8	177	341	results/tool_benchmark_chr21/svim/truvari_svim/summary.json
+chr22	training	ReadGraphSV v0.3 + dedup	0.926316	0.951351	0.938667	176	176	14	9	185	190	results/v3_full_pipeline_dedup_chr22_benchmark/truvari_readgraphsv/summary.json
+chr22	training	Sniffles2	0.917526	0.962162	0.939314	178	178	16	7	185	194	results/tool_benchmark_chr22/sniffles2/truvari_sniffles2/summary.json
+chr22	training	cuteSV	0.911917	0.951351	0.931217	176	176	17	9	185	193	results/tool_benchmark_chr22/cutesv/truvari_cutesv/summary.json
+chr22	training	SVIM	0.520958	0.940541	0.670520	174	174	160	11	185	334	results/tool_benchmark_chr22/svim/truvari_svim/summary.json
